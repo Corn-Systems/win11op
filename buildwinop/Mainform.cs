@@ -200,8 +200,6 @@ public class MainForm : Form
             Controls.Add(_sidebar);
             Controls.Add(_bottomBar);
             Controls.Add(_topBar);
-
-            CornScrollBar.Attach(_sidebar);
             Controls.Add(_logPanel);
             BuildTooltip();
 
@@ -538,9 +536,6 @@ private void BuildMainArea()
             _mainArea.Controls.Add(_diskCleanupTab);
             _mainArea.Controls.Add(_tileGrid);
             _mainArea.Controls.Add(_searchBar); // add last so it docks on top
-
-            CornScrollBar.Attach(_tileGrid);
-            CornScrollBar.Attach(_histPanel);
         }
 
 private void BuildSearchBar()

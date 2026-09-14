@@ -18,7 +18,9 @@ namespace Win11Optimizer
     {
         [DllImport("user32.dll")]
         private static extern bool ShowScrollBar(IntPtr hWnd, int wBar, [MarshalAs(UnmanagedType.Bool)] bool bShow);
-        private const int SB_VERT = 1;
+        private const int SB_BOTH = 3;   // hide both native bars — content a pixel or two
+                                          // wider/taller than the panel would otherwise
+                                          // show an unthemed sliver on that edge
 
         private readonly ScrollableControl _target;
         private readonly Timer _hideTimer;
@@ -53,13 +55,22 @@ namespace Win11Optimizer
             BackColor = _target.BackColor;
             Cursor    = Cursors.Default;
 
-            _target.Resize        += (s, e) => SyncBounds();
-            _target.SizeChanged   += (s, e) => { SyncBounds(); Invalidate(); };
-            _target.ControlAdded  += (s, e) => Invalidate();
-            _target.Scroll        += (s, e) => { Reveal(); Invalidate(); };
-            _target.MouseWheel    += (s, e) => { Reveal(); Invalidate(); };
-            _target.HandleCreated += (s, e) => HideNativeBar();
-            if (_target.Parent != null) _target.Parent.Resize += (s, e) => SyncBounds();
+            _target.Resize          += (s, e) => SyncBounds();
+            _target.SizeChanged     += (s, e) => { SyncBounds(); Invalidate(); };
+            _target.LocationChanged += (s, e) => SyncBounds();
+            _target.ControlAdded    += (s, e) => Invalidate();
+            _target.Scroll          += (s, e) => { Reveal(); HideNativeBar(); Invalidate(); };
+            _target.MouseWheel      += (s, e) => { Reveal(); HideNativeBar(); Invalidate(); };
+            _target.HandleCreated   += (s, e) => { HideNativeBar(); SyncBounds(); };
+            _target.VisibleChanged  += (s, e) => { HideNativeBar(); SyncBounds(); };
+            if (_target.Parent != null)
+            {
+                // Fires whenever the parent's dock/anchor layout actually recalculates —
+                // catches _target moving (e.g. a sibling docking above it) even when
+                // _target's own size doesn't change, which Resize alone misses.
+                _target.Parent.Layout += (s, e) => SyncBounds();
+                _target.Parent.Resize += (s, e) => SyncBounds();
+            }
 
             MouseEnter += (s, e) => { _hovering = true;  Reveal(); };
             MouseLeave += (s, e) => { _hovering = false; ScheduleHide(); };
@@ -80,10 +91,11 @@ namespace Win11Optimizer
                 if (_alpha <= 0f) _fadeTimer.Stop();
             };
 
-            // WinForms re-asserts the native WS_VSCROLL style on its own layout passes
-            // (resize, content changes), so a single "hide it once" call doesn't stick —
-            // keep stripping it on a light timer rather than chasing every internal hook.
-            _nativeGuardTimer = new Timer { Interval = 250 };
+            // WinForms re-asserts native scrollbar styles on its own layout passes
+            // (resize, content changes, scrolling), so a single "hide it once" call
+            // doesn't stick — keep stripping it on a fast timer as a safety net on
+            // top of the event hooks above, so any gap is effectively invisible.
+            _nativeGuardTimer = new Timer { Interval = 80 };
             _nativeGuardTimer.Tick += (s, e) => HideNativeBar();
             _nativeGuardTimer.Start();
 
@@ -100,7 +112,7 @@ namespace Win11Optimizer
 
         private void HideNativeBar()
         {
-            try { if (_target.IsHandleCreated) ShowScrollBar(_target.Handle, SB_VERT, false); }
+            try { if (_target.IsHandleCreated) ShowScrollBar(_target.Handle, SB_BOTH, false); }
             catch (Exception ex) { SessionLog.Write("SCROLLBAR", ex); }
         }
 

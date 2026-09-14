@@ -32,7 +32,6 @@ namespace Win11Optimizer
             BuildScrollArea();
 
             Controls.Add(_scrollPanel);
-            CornScrollBar.Attach(_scrollPanel);
             Controls.Add(_toolbar);
         }
 

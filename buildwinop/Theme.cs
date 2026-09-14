@@ -30,11 +30,5 @@ namespace Win11Optimizer
         public static readonly Color BORDER2     = Color.FromArgb( 61,  58, 112);  // --border2: #3d3a70
 
         public static readonly Color ACCENT_TEXT = Color.FromArgb(  8,   8,  18);  // dark text on gold buttons
-
-        // ── Scrollbar (Claude-desktop-style thin overlay scrollbar) ───────────
-        public static readonly Color SCROLL_TRACK      = Color.FromArgb(  0,   0,   0,   0);  // fully transparent track
-        public static readonly Color SCROLL_THUMB      = Color.FromArgb( 90,  70,  61, 112);  // dim BORDER2, low alpha
-        public static readonly Color SCROLL_THUMB_HOVER = Color.FromArgb(160, 245, 200,  66);  // ACCENT, translucent
-        public static readonly Color SCROLL_THUMB_DRAG  = Color.FromArgb(220, 245, 200,  66);  // ACCENT, near-opaque
     }
 }
