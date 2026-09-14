@@ -42,8 +42,7 @@ namespace Win11Optimizer
 
         private static readonly List<BackupEntry> _backups = new();
         private static readonly HashSet<string>   _appliedCategories = new(StringComparer.OrdinalIgnoreCase);
-        private static readonly string            BackupFile =
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tweaks_backup.json");
+        private static readonly string            BackupFile = AppPaths.TweaksBackupFile;
 
         public static IReadOnlyCollection<string> AppliedCategories => _appliedCategories;
         public static bool HasBackup(string category) => _appliedCategories.Contains(category);
@@ -90,9 +89,9 @@ namespace Win11Optimizer
 
         public static void SaveBackups()
         {
-            try { File.WriteAllText(BackupFile, JsonSerializer.Serialize(_backups,
+            try { AppPaths.EnsureDataDir(); File.WriteAllText(BackupFile, JsonSerializer.Serialize(_backups,
                 new JsonSerializerOptions { WriteIndented = true })); }
-            catch (Exception ex) { Debug.WriteLine($"[BACKUP SAVE] {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("BACKUP SAVE", ex); }
         }
 
         public static void LoadBackups()
@@ -105,7 +104,7 @@ namespace Win11Optimizer
                 _backups.Clear(); _backups.AddRange(loaded);
                 foreach (var b in _backups) _appliedCategories.Add(b.Category);
             }
-            catch (Exception ex) { Debug.WriteLine($"[BACKUP LOAD] {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("BACKUP LOAD", ex); }
         }
 
         public static List<TweakResult> RestoreCategory(string category)
@@ -181,7 +180,9 @@ namespace Win11Optimizer
                     CreateNoWindow = true, UseShellExecute = false,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using var p = Process.Start(psi); p.WaitForExit();
+                using var p = Process.Start(psi);
+                if (p == null) throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+                p.WaitForExit();
                 _results.Add(new TweakResult { Name = name, Success = p.ExitCode == 0 });
             }
             catch (Exception ex)
@@ -202,7 +203,9 @@ namespace Win11Optimizer
                     UseShellExecute = false, CreateNoWindow = true,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using var p = Process.Start(psi); p.WaitForExit();
+                using var p = Process.Start(psi);
+                if (p == null) throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+                p.WaitForExit();
                 _results.Add(new TweakResult { Name = name, Success = p.ExitCode == 0 });
             }
             catch (Exception ex)
@@ -386,7 +389,7 @@ namespace Win11Optimizer
                 if (start < 0 || end < 0) return;
                 File.WriteAllText(HostsPath, content.Remove(start, (end - start) + HostsMarkerEnd.Length + 2));
             }
-            catch (Exception ex) { Debug.WriteLine($"[HOSTS RESTORE] {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("HOSTS RESTORE", ex); }
         }
 
         // ── NAGLE'S ALGORITHM ─────────────────────────────────────────────
@@ -436,7 +439,9 @@ namespace Win11Optimizer
                     UseShellExecute = false, CreateNoWindow = true,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using var p = Process.Start(psi); p.WaitForExit();
+                using var p = Process.Start(psi);
+                if (p == null) throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+                p.WaitForExit();
                 if (p.ExitCode != 0)
                 {
                     string err = p.StandardError.ReadToEnd().Trim();
@@ -444,7 +449,7 @@ namespace Win11Optimizer
                 }
                 return true;
             }
-            catch (Exception ex) { Debug.WriteLine($"[RESTORE POINT] {ex.Message}"); return false; }
+            catch (Exception ex) { SessionLog.Write("RESTORE POINT", ex); return false; }
         }
 
         // ── BLOATWARE ─────────────────────────────────────────────────────
@@ -894,6 +899,7 @@ namespace Win11Optimizer
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
                 using var p = Process.Start(psi);
+                if (p == null) return null;
                 string output = p.StandardOutput.ReadToEnd();
                 p.WaitForExit();
                 if (output.Contains("DISABLED")) return true;

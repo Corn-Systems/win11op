@@ -340,9 +340,11 @@ namespace Win11Optimizer
                     CreateNoWindow = true, UseShellExecute = false,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using var p = Process.Start(psi); p.WaitForExit();
+                using var p = Process.Start(psi);
+                if (p == null) throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+                p.WaitForExit();
             }
-            catch (Exception ex) { Debug.WriteLine($"[CLEANUP] RunCommand: {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("CLEANUP", ex); }
         }
 
         private static void RunPowerShell(string script)
@@ -356,9 +358,11 @@ namespace Win11Optimizer
                     UseShellExecute = false, CreateNoWindow = true,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using var p = Process.Start(psi); p.WaitForExit();
+                using var p = Process.Start(psi);
+                if (p == null) throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+                p.WaitForExit();
             }
-            catch (Exception ex) { Debug.WriteLine($"[CLEANUP] RunPowerShell: {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("CLEANUP", ex); }
         }
     }
 }

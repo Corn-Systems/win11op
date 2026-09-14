@@ -115,7 +115,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[STARTUP] ReadRegistryRun({runPath}): {ex.Message}");
+                SessionLog.Write("STARTUP", ex);
             }
         }
 
@@ -155,7 +155,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[STARTUP] ReadStartupFolder({folder}): {ex.Message}");
+                SessionLog.Write("STARTUP", ex);
             }
         }
 
@@ -186,7 +186,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[STARTUP] SetEnabled({entry.Name}): {ex.Message}");
+                SessionLog.Write("STARTUP", ex);
                 return false;
             }
         }
@@ -212,7 +212,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[STARTUP] Delete({entry.Name}): {ex.Message}");
+                SessionLog.Write("STARTUP", ex);
                 return false;
             }
         }

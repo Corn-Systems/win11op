@@ -44,8 +44,8 @@ namespace Win11Optimizer
             _silent = args.Contains("--silent");
             try
             {
-                _logFile = new StreamWriter(
-                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cli_run.log"),
+                AppPaths.EnsureDataDir();
+                _logFile = new StreamWriter(AppPaths.CliRunLog,
                     append: true) { AutoFlush = true };
             }
             catch { /* log file is best-effort */ }
@@ -120,7 +120,7 @@ namespace Win11Optimizer
                     Log("WARNING: not running as Administrator — most tweaks will fail. " +
                         "Re-run from an elevated prompt.");
             }
-            catch { }
+            catch (Exception ex) { Log($"WARNING: could not determine admin status: {ex.Message}"); }
 
             Log($"══ Win11 Optimizer v{AppVersion.Current} — CLI apply ══");
             Log($"Profile:  \"{profile.Name}\" ({profilePath})");

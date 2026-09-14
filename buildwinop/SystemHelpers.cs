@@ -15,7 +15,7 @@ namespace Win11Optimizer
     // Bump this alongside <Version> in the .csproj and MyAppVersion in the .iss.
     public static class AppVersion
     {
-        public const string Current = "1.4.1";
+        public const string Current = "1.4.2";
         public const string RepoUrl = "https://github.com/Corn-Systems/win11op";
         public const string ReleasesApiUrl =
             "https://api.github.com/repos/Corn-Systems/win11op/releases/latest";
@@ -95,7 +95,7 @@ namespace Win11Optimizer
                     CreateNoWindow = true, UseShellExecute = false,
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
-                using (var p = Process.Start(psi)) p.WaitForExit(10000);
+                using (var p = Process.Start(psi)) p?.WaitForExit(10000);
 
                 // Give the shell a beat to fully exit before relaunching
                 Thread.Sleep(500);

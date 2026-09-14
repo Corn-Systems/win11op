@@ -15,7 +15,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "Win11 Optimizer"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.4.2"
 #define MyAppPublisher "Corn Systems"
 #define MyAppURL "https://github.com/Corn-Systems/win11op"
 #define MyAppExeName "Win11Optimizer.exe"
@@ -63,6 +63,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 [UninstallDelete]
 ; Clean up the app's own state files on uninstall — leave the user's registry
 ; tweaks alone (those are Windows settings, not app files, and undoing them
-; on uninstall would be surprising/destructive behavior).
-Type: files; Name: "{app}\applied_tweaks.json"
-Type: files; Name: "{app}\tweaks_backup.json"
+; on uninstall would be surprising/destructive behavior). Everything the app
+; writes now lives under Data\ next to the exe (see AppPaths.cs) instead of
+; loose in the install folder, so removing that one subfolder covers it.
+Type: filesandordirs; Name: "{app}\Data"

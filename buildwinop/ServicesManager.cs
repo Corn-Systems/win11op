@@ -37,8 +37,7 @@ namespace Win11Optimizer
 
     public static class ServicesManager
     {
-        private static readonly string BackupFile =
-            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "services_backup.json");
+        private static readonly string BackupFile = AppPaths.ServicesBackupFile;
 
         // Original start types recorded the first time each service is disabled
         // through this tab, so Restore puts back exactly what the machine had.
@@ -245,17 +244,18 @@ namespace Win11Optimizer
                 if (loaded != null)
                     _originals = new Dictionary<string, int>(loaded, StringComparer.OrdinalIgnoreCase);
             }
-            catch { }
+            catch (Exception ex) { SessionLog.Write("SERVICES LOAD ORIGINALS", ex); }
         }
 
         private static void SaveOriginals()
         {
             try
             {
+                AppPaths.EnsureDataDir();
                 File.WriteAllText(BackupFile, JsonSerializer.Serialize(_originals,
                     new JsonSerializerOptions { WriteIndented = true }));
             }
-            catch (Exception ex) { Debug.WriteLine($"[SERVICES] save originals: {ex.Message}"); }
+            catch (Exception ex) { SessionLog.Write("SERVICES SAVE ORIGINALS", ex); }
         }
 
         // ── PROCESS HELPER (deadlock-safe pattern) ───────────────────────
@@ -269,6 +269,7 @@ namespace Win11Optimizer
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
                 using var p = Process.Start(psi);
+                if (p == null) return "";
                 var outTask = p.StandardOutput.ReadToEndAsync();
                 var errTask = p.StandardError.ReadToEndAsync();
                 p.WaitForExit();
@@ -276,7 +277,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[SERVICES] RunCapture({fileName}): {ex.Message}");
+                SessionLog.Write("SERVICES", ex);
                 return "";
             }
         }

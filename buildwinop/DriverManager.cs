@@ -126,7 +126,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DRIVER] in-use query failed: {ex.Message}");
+                SessionLog.Write("DRIVER", ex);
             }
             return set;
         }
@@ -163,6 +163,7 @@ namespace Win11Optimizer
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
                 using var p = Process.Start(psi);
+                if (p == null) { error = "pnputil.exe failed to launch."; return false; }
                 // Read both streams concurrently — reading them sequentially can
                 // deadlock if the process fills one pipe buffer while we're
                 // blocked on the other.
@@ -193,6 +194,7 @@ namespace Win11Optimizer
                     RedirectStandardOutput = true, RedirectStandardError = true
                 };
                 using var p = Process.Start(psi);
+                if (p == null) return "";
                 // Drain both streams concurrently — stderr is redirected, so if
                 // it's never read and the buffer fills, the child blocks forever.
                 var outTask = p.StandardOutput.ReadToEndAsync();
@@ -203,7 +205,7 @@ namespace Win11Optimizer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DRIVER] RunCapture({fileName}): {ex.Message}");
+                SessionLog.Write("DRIVER", ex);
                 return "";
             }
         }
