@@ -4,7 +4,7 @@ VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "buildwinop", "buildwinop", "{F5E248EB-261B-4705-4989-7282C6A198D1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Win11optimizer", "buildwinop\Win11optimizer.csproj", "{4B74D4D5-0059-E689-3BF4-97868C4C04D3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Win11Optimizer", "buildwinop\Win11Optimizer.csproj", "{4B74D4D5-0059-E689-3BF4-97868C4C04D3}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
