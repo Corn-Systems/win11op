@@ -18,9 +18,16 @@ namespace Win11Optimizer
         private TileStatus    _status;
         private string        _statusText = "";
         private Color         _statusColor;
+        private Label         _nameLabel, _descLabel;
 
         public TweakEntry Entry { get; }
         public event EventHandler CheckedChanged;
+
+        // Why this tweak can't be used on this PC (null = usable). An unavailable tile can never be
+        // checked, so presets, Select All and profile imports all skip it without special-casing.
+        public string UnavailableReason { get; private set; }
+        // Hardware isn't present at all — the grid hides the tile instead of greying it
+        public bool HiddenByHardware { get; private set; }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public bool IsChecked
@@ -28,7 +35,8 @@ namespace Win11Optimizer
             get => _checked;
             set
             {
-                _checked  = value;
+                _checked  = value && UnavailableReason == null;
+                value     = _checked;
                 // Subtle gold-tinted warm surface when selected — matches website featured card
                 BackColor = value ? Color.FromArgb(22, 19, 38) : Theme.CARD;
                 Invalidate();
@@ -94,6 +102,13 @@ namespace Win11Optimizer
                     using var sb = new SolidBrush(_statusColor);
                     g.DrawString(_statusText, Theme.Mono(7f), sb, 12, Height - 18);
                 }
+
+                if (UnavailableReason != null)
+                {
+                    using var sb  = new SolidBrush(Theme.WARNING);
+                    using var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+                    g.DrawString("⛔ " + UnavailableReason, Theme.Mono(6.5f), sb, new RectangleF(10, Height - 18, Width - 16, 14), fmt);
+                }
             };
 
             Controls.AddRange(new Control[]
@@ -123,11 +138,28 @@ namespace Win11Optimizer
                 },
             });
 
-            void Toggle(object s, EventArgs e) => IsChecked = !_checked;
+            (_nameLabel, _descLabel) = ((Label)Controls[1], (Label)Controls[2]);
+
+            void Toggle(object s, EventArgs e) { if (UnavailableReason == null) IsChecked = !_checked; }
             Click += Toggle;
             foreach (Control child in Controls) child.Click += Toggle;
-            MouseEnter += (s, e) => { if (!_checked) BackColor = Theme.SURFACE; };
-            MouseLeave += (s, e) => { if (!_checked) BackColor = Theme.CARD; };
+            MouseEnter += (s, e) => { if (!_checked && UnavailableReason == null) BackColor = Theme.SURFACE; };
+            MouseLeave += (s, e) => { if (!_checked && UnavailableReason == null) BackColor = Theme.CARD; };
+        }
+
+        // Marks the tile unusable (reason) or usable again (null). Unchecks it first, so a tile
+        // selected before the hardware scan finished can't slip into a run.
+        public void SetAvailability(Avail state, string reason)
+        {
+            UnavailableReason = state == Avail.Ok ? null : reason ?? "not available";
+            HiddenByHardware  = state == Avail.Hidden;
+            if (UnavailableReason != null && _checked) IsChecked = false;
+            bool off = UnavailableReason != null;
+            Cursor = off ? Cursors.Default : Cursors.Hand;
+            _nameLabel.ForeColor = off ? Theme.TEXT_SEC : Theme.TEXT_PRI;
+            _descLabel.ForeColor = off ? Theme.TEXT_SEC : Theme.TEXT_DIM;
+            foreach (Control c in Controls) c.Cursor = Cursor;
+            Invalidate();
         }
 
         public void SetApplied(AppliedSource source)

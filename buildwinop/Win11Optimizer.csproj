@@ -8,7 +8,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Win11Optimizer</AssemblyName>
     <RootNamespace>Win11Optimizer</RootNamespace>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationManifest>App.manifest</ApplicationManifest>
     <Company>Corn Systems</Company>
     <Product>Win11 Optimizer</Product>
     <Copyright>Copyright © 2026 Connor J.</Copyright>

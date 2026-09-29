@@ -67,6 +67,43 @@ namespace Win11Optimizer
 
         internal static bool? HibernationEnabled() => Dw(Ctl + @"\Power", "HibernateEnabled") is int v ? v != 0 : null;
 
+        // true when every part this device exposes already satisfies the tweak; null when none are readable
+        private static bool? PowerApplied(PowerPart[] parts)
+        {
+            bool any = false;
+            foreach (var p in parts)
+            {
+                var info = QueryPower(p.Sub, p.Setting);
+                if (info?.Dc is not int dc || PowerTarget(p, info) is not int target) continue;
+                any = true;
+                if (!p.Satisfied(dc, target)) return false;
+            }
+            return any ? true : null;
+        }
+
+        // Every installed browser / Teams already prefers the integrated GPU; null when there are none
+        private static bool? GpuPreferencesApplied()
+        {
+            var apps = Hardware.GpuPreferenceApps();
+            return apps.Count == 0 ? null : apps.All(a => Sz(GpuPrefKey, a) == "GpuPreference=1;");
+        }
+
+        // One line for the tooltip: what the battery-side settings are right now, and what the tweak would change them to
+        public static string CurrentSummary(string key)
+        {
+            if (!LaptopPower.TryGetValue(key, out var parts)) return null;
+            var bits = new System.Collections.Generic.List<string>();
+            foreach (var p in parts)
+            {
+                var info = QueryPower(p.Sub, p.Setting);
+                if (info?.Dc is not int dc || PowerTarget(p, info) is not int target) continue;
+                bits.Add(p.Satisfied(dc, target)
+                    ? $"{p.Short} {p.Show(info, dc)} ✔"
+                    : $"{p.Short} {p.Show(info, dc)} → {p.Show(info, target)}");
+            }
+            return bits.Count == 0 ? null : string.Join("  ·  ", bits);
+        }
+
         // True when every display adapter already has the given interrupt value set
         private static bool? AllGpus(string sub, string name, int expected)
         {
@@ -77,11 +114,13 @@ namespace Win11Optimizer
         public static bool? Check(string key)
         {
             if (key == null) return null;
-            // Laptop power-plan tweaks: compare the active plan's battery (DC) value
-            if (LaptopPower.TryGetValue(key, out var lp))
+            // Laptop power-plan tweaks: every readable part of the active plan's battery (DC) values must be satisfied
+            if (LaptopPower.TryGetValue(key, out var parts))
             {
-                var (_, dc) = QueryPowerSetting(lp.sub, lp.setting);
-                return dc == null ? null : dc == lp.dc;
+                bool? power = PowerApplied(parts);
+                if (key != "Lap_GpuPowerSaving") return power;
+                bool? apps = GpuPreferencesApplied();
+                return power == null ? apps : apps == null ? power : power == true && apps == true;
             }
             try
             {
@@ -169,6 +208,11 @@ namespace Win11Optimizer
                     "Lap_BackgroundApps"    => Dw(LmPol + @"\Windows\AppPrivacy", "LetAppsRunInBackground") == 2,
                     "Lap_EdgeBackground"    => Dw(LmPol + @"\Edge", "StartupBoostEnabled") == 0,
                     "Lap_Transparency"      => Dw(CuCv + @"\Themes\Personalize", "EnableTransparency") == 0,
+                    "Lap_VoiceActivation"   => Dw(AppPrivacy, "LetAppsActivateWithVoice") == 2,
+                    "Lap_CrossDevice"       => Dw(LmPol + @"\Windows\System", "EnableCdp") == 0,
+                    "Lap_SearchHighlights"  => Dw(CuCv + @"\SearchSettings", "IsDynamicSearchBoxEnabled") == 0,
+                    "Lap_SettingsSync"      => Dw(LmPol + @"\Windows\SettingSync", "DisableSettingSync") == 2,
+                    "Lap_MaintenanceWake"   => Dw(MaintenanceKey, "WakeUp") == 0 || Dw(LmPol + @"\Windows\ScheduledMaintenance", "WakeUp") == 0,
 
                     _ => null
                 };

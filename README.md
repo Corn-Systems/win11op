@@ -67,7 +67,7 @@ One-click presets to quickly select tweaks for common configurations:
 | 🔒 Privacy | Recommended + all Privacy tweaks |
 | 🛡 Security | Recommended + all Security tweaks |
 | 🪶 Minimal | Conservative subset of safe tweaks |
-| 💻 Laptop | Recommended + Privacy/Responsiveness/Security + the Laptop battery section, excludes tweaks that cost battery |
+| 💻 Laptop ▾ | Opens a tier menu — **Light** (invisible battery tweaks only), **Balanced** (Recommended + Privacy/Responsiveness/Security + the everyday battery set, excludes tweaks that cost battery), or **Max battery** (Balanced + dimmer screen, passive cooling, no background Store apps) |
 | 🧹 Clean Install | Bloatware + Privacy + security baseline |
 | 🔬 Dev Machine | Performance + Network + advanced CPU tweaks |
 | ☢ Nuclear | Everything except Bloatware, Advanced & Laptop |
@@ -208,6 +208,26 @@ Battery-focused tweaks. Off by default — use the **💻 Laptop** preset or pic
 | Block Background Store Apps | Store apps can't run in the background (applies on AC too) |
 | Stop Edge Running in Background | Disables Edge Startup Boost + keep-running-after-close |
 | Disable Transparency Effects | Turns off Mica/acrylic blur to cut GPU work |
+| Hibernate After 60 Min Asleep | A sleeping laptop hibernates after an hour instead of draining 1–2%/hour (needs hibernation on) |
+| Re-Sleep Fast After Auto-Wakes | Goes back to sleep 1 min after a scheduled wake |
+| Dim Screen After 1 Min | Dims the display well before it switches off |
+| Cap Battery Brightness at 40% | Lowers (never raises) the brightness Windows uses on battery |
+| Lock Screen Off After 30 Sec | Screen switches off 30 s after locking |
+| Passive Cooling & 5% Min CPU | CPU throttles before the fan spins up |
+| Lid Close = Sleep on Battery | Only changes a lid action that's set to "Do nothing" |
+| Earlier Low-Battery Warnings | Warns at 15%, critical action at 7% (never lowers your levels) |
+| Pause Slideshow, Allow Media Sleep | Pauses the wallpaper slideshow; lets sleep happen while media sharing is on |
+| Spin Down Hard Disk After 5 Min | HDD stops spinning when idle (only shown if you have a hard disk) |
+| Graphics Power Slider: Battery | Intel/AMD driver power slider → its battery-saving option (only shown if the driver exposes one) |
+| Browsers & Teams on Integrated GPU | Edge/Chrome/Firefox/Brave/Teams use the low-power GPU (only shown on hybrid-graphics PCs) |
+| Block Voice Activation | Stops apps listening for wake words |
+| Disable Cross-Device Sync | Turns off Nearby Sharing / Connected Devices background sync |
+| Disable Search Highlights | Stops the search box fetching daily illustrations |
+| Disable Settings Sync | Stops Windows settings roaming via your Microsoft account |
+| No Maintenance Wake-Ups | Automatic Maintenance can't wake the PC |
+| Network Adapter: No Wake-on-LAN | Wake-on-packet off, idle adapters may power down (original values saved for Undo) |
+
+**Made for your hardware.** The app checks what your PC actually has. Tweaks for hardware you don't have (no ambient light sensor, no hard disk, no Wi-Fi, no second GPU, no Intel/AMD power slider) are hidden. Tweaks that can't work here are greyed out with the reason — battery-only tweaks on a desktop, and *No Network in Modern Standby* on a PC that uses S3 sleep. Hovering a power-plan tweak also shows what that setting is **right now** (for example `Screen off after 10 min → 3 min`). Every timeout, brightness and battery-level tweak only *tightens* your existing value — it never loosens one you already set stricter.
 
 ---
 
@@ -250,7 +270,7 @@ Win11 Optimizer ships two ways: the portable single-file exe above, and a proper
    ```
    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" Win11Optimizer.iss
    ```
-3. The installer is produced at `installer_output\Win11Optimizer-Setup.exe` — it installs to Program Files, creates Start Menu/desktop shortcuts, and registers a proper uninstaller. The app itself still requires Administrator every launch (declared in `app.manifest`), same as the portable build.
+3. The installer is produced at `installer_output\Win11Optimizer-Setup.exe` — it installs to Program Files, creates Start Menu/desktop shortcuts, and registers a proper uninstaller. The app itself still requires Administrator every launch (declared in `App.manifest`), same as the portable build.
 
 A GitHub release should include both `Win11Optimizer-Portable.exe` (the raw publish output, renamed) and `Win11Optimizer-Setup.exe`.
 

@@ -38,7 +38,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ; The Setup.exe itself needs admin to write to Program Files / register the uninstaller.
-; The app's own app.manifest separately requests admin on every launch.
+; The app's own App.manifest separately requests admin on every launch.
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}

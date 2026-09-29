@@ -150,6 +150,9 @@ namespace Win11Optimizer
             "Lap_IndexOnBattery",   // Windows Search reads policy at service start
             "Lap_BackgroundApps",   // AppPrivacy policy applied at sign-in
             "Net_DeliveryOpt",      // DoSvc reads policy at service start
+            "Lap_VoiceActivation",  // AppPrivacy policy applied at sign-in
+            "Lap_CrossDevice",      // CDPUserSvc reads policy at service start
+            "Lap_SettingsSync",     // SettingSyncHost reads policy at sign-in
         };
 
         // Tweaks that only need the shell restarted (disjoint from NeedsReboot).
@@ -157,7 +160,7 @@ namespace Win11Optimizer
         {
             "Perf_VisualFX", "Adv_Animations", "Resp_MenuDelay", "Resp_WinTips",
             "Resp_SuggestedContent", "Priv_ChatIcon", "Priv_BingStart", "Priv_CloudContent",
-            "Perf_Widgets", "Resp_ClassicContext", "Resp_EndTask", "Lap_Transparency",
+            "Perf_Widgets", "Resp_ClassicContext", "Resp_EndTask", "Lap_Transparency", "Lap_SearchHighlights",
         };
 
         public static (List<string> reboot, List<string> explorer) Split(IEnumerable<TweakEntry> entries)

@@ -76,6 +76,30 @@ namespace Win11Optimizer
             _adminBadge.Visible = showAdminWarning;
             CheckWhatsNew();
             _ = CheckForUpdatesAsync();
+            _ = DetectHardwareAsync();
+        }
+
+        // The slow hardware probes run in the background; tiles are then greyed out or hidden in place
+        // (no grid rebuild, so nothing jumps under the cursor).
+        private async Task DetectHardwareAsync()
+        {
+            try
+            {
+                await Task.Run(Hardware.Detect);
+                ApplyHardwareState();
+            }
+            catch (Exception ex) { SessionLog.Write("HARDWARE SCAN", ex); }   // form closed mid-scan
+        }
+
+        // Greys out or hides Laptop tiles this PC can't use, then refreshes visibility and the counter
+        private void ApplyHardwareState()
+        {
+            foreach (var t in _tiles)
+            {
+                var (state, reason) = Hardware.Check(t.Entry.TweakKey);
+                t.SetAvailability(state, reason);
+            }
+            ApplySearchFilter();
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -411,18 +435,36 @@ namespace Win11Optimizer
                 };
                 b.FlatAppearance.BorderColor        = border;
                 b.FlatAppearance.MouseOverBackColor = hover;
-                b.Click += (s, e) => ApplyPreset(key);
+                if (key != "LaptopMenu") b.Click += (s, e) => ApplyPreset(key);   // that one opens the tier menu instead
                 return b;
             }
+
+            // Laptop is three presets behind one button — a small menu picks the tier
+            var laptopMenu = new ContextMenuStrip { BackColor = Theme.SURFACE2, ForeColor = Theme.TEXT_PRI, ShowImageMargin = false, Font = Theme.Ui(8.5f) };
+            foreach (var (text, key) in new[]
+            {
+                ("🔋  Light — invisible tweaks only",              "LaptopLight"),
+                ("💻  Balanced — the everyday battery set",        "Laptop"),
+                ("🪫  Max battery — also dims screen & blocks background apps", "LaptopMax"),
+            })
+                laptopMenu.Items.Add(text, null, (s, e) => ApplyPreset(key));
 
             var lime = Color.FromArgb(204, 255, 0);
             foreach (var (label, key) in new[]
             {
                 ("⭐ Recommended", "Recommended"), ("🎮 Gaming PC", "Gaming"), ("🔒 Privacy", "Privacy"),
-                ("🛡 Security", "Security"), ("🪶 Minimal", "Minimal"), ("💻 Laptop", "Laptop"),
+                ("🛡 Security", "Security"), ("🪶 Minimal", "Minimal"), ("💻 Laptop ▾", "LaptopMenu"),
                 ("🧹 Clean Install", "CleanInstall"), ("🔬 Dev Machine", "DevMachine"),
             })
-                presetStrip.Controls.Add(MakePreset(label, key, Theme.ACCENT, Theme.SURFACE2, lime, Color.FromArgb(30, lime)));
+            {
+                var btn = MakePreset(label, key, Theme.ACCENT, Theme.SURFACE2, lime, Color.FromArgb(30, lime));
+                if (key == "LaptopMenu")
+                {
+                    btn.Click += (s, e) => laptopMenu.Show(btn, new Point(0, btn.Height));
+                    btn.Disposed += (s, e) => laptopMenu.Dispose();
+                }
+                presetStrip.Controls.Add(btn);
+            }
             // Nuclear stays red — intentionally different to signal danger
             presetStrip.Controls.Add(MakePreset("☢ Nuclear", "Nuclear", Theme.DANGER, Color.FromArgb(45, 20, 20),
                 Color.FromArgb(100, 40, 40), Color.FromArgb(60, 30, 30), gap: 8));
@@ -448,7 +490,7 @@ namespace Win11Optimizer
                 }
                 else if (c is TweakTile tile)
                 {
-                    bool match = Matches(tile.Entry);
+                    bool match = !tile.HiddenByHardware && Matches(tile.Entry);
                     tile.Visible  = match;
                     headerHasHit |= match;
                 }
@@ -487,7 +529,18 @@ namespace Win11Optimizer
             ShowAllTweaks();
             ClearSearch();
 
-            bool hasBattery = SystemInformation.PowerStatus.BatteryChargeStatus != BatteryChargeStatus.NoSystemBattery;
+            bool hasBattery = Hardware.HasBattery;
+
+            // Recommended + privacy/responsiveness/security + the Laptop tweaks up to a tier, minus
+            // anything that trades battery for speed (or breaks hibernate-on-critical).
+            bool LaptopPick(TweakEntry e, int maxTier) =>
+                (e.DefaultOn || e.Category is "Privacy" or "Responsiveness" or "Security" or "Laptop")
+                && e.TweakKey is not ("Perf_PowerPlan" or "Perf_Hibernate" or "Perf_MemCompression" or
+                    "Perf_PowerThrottle" or "Perf_TimerRes" or "Resp_PlatformTick" or "Resp_VerboseStatus" or
+                    "Adv_DynamicTick" or "Game_GPUPower" or "Game_HAGS")
+                && (e.Category != "Laptop" || LaptopTiers.Of(e.TweakKey) is > 0 && LaptopTiers.Of(e.TweakKey) <= maxTier);
+
+            string noBattery = "Laptop — note: no battery detected, the battery-only settings won't do anything on this PC";
             (Func<TweakEntry, bool> Pick, string Msg, Color Col) p = preset switch
             {
                 "Recommended" => (e => e.DefaultOn,
@@ -509,16 +562,17 @@ namespace Win11Optimizer
                         "Priv_Feedback" or "Priv_AppTracking" or "Priv_Recall" or
                         "Perf_StartupDelay" or "Perf_VisualFX" or "Priv_CloudContent",
                     "Minimal — safe UI & privacy tweaks only", Theme.TEXT_SEC),
-                // Recommended + privacy/responsiveness/security + the Laptop battery section, minus
-                // anything that trades battery for speed (or breaks hibernate-on-critical).
-                "Laptop" => (e => (e.DefaultOn || e.Category is "Privacy" or "Responsiveness" or "Security" or "Laptop")
-                        && e.TweakKey is not ("Perf_PowerPlan" or "Perf_Hibernate" or "Perf_MemCompression" or
-                            "Perf_PowerThrottle" or "Perf_TimerRes" or "Resp_PlatformTick" or "Resp_VerboseStatus" or
-                            "Adv_DynamicTick" or "Game_GPUPower" or "Game_HAGS" or
-                            "Lap_BackgroundApps"),   // opt-in: breaks live notifications for Store apps
-                    hasBattery ? "Laptop — battery-life tweaks + battery-safe privacy & responsiveness"
-                               : "Laptop — note: no battery detected, the battery-only settings won't do anything on this PC",
+                // Light: only the near-invisible battery tweaks — no privacy/responsiveness extras
+                "LaptopLight" => (e => e.Category == "Laptop" && LaptopTiers.Of(e.TweakKey) is > 0 and <= 1,
+                    hasBattery ? "Laptop Light — invisible battery tweaks only" : noBattery,
+                    hasBattery ? Color.FromArgb(125, 211, 252) : Theme.WARNING),
+                // Balanced: the everyday set. Lap_BackgroundApps and the brightness cap are Max-only (visible trade-offs)
+                "Laptop" => (e => LaptopPick(e, 2),
+                    hasBattery ? "Laptop Balanced — battery-life tweaks + battery-safe privacy & responsiveness" : noBattery,
                     hasBattery ? Color.FromArgb(56, 189, 248) : Theme.WARNING),
+                "LaptopMax" => (e => LaptopPick(e, 3),
+                    hasBattery ? "Laptop Max battery — everything in Balanced, plus dimmer screen, passive cooling & no background Store apps" : noBattery,
+                    hasBattery ? Color.FromArgb(14, 165, 233) : Theme.WARNING),
                 "CleanInstall" => (e => e.Category is "Bloatware" or "Privacy"
                         || e.TweakKey is "Sec_Defender" or "Sec_NetBIOS" or "Sec_RDP"
                                       or "Resp_WinTips" or "Resp_SuggestedContent" or "Perf_StartupDelay",
@@ -585,7 +639,7 @@ namespace Win11Optimizer
             }
 
             _tileGrid.ResumeLayout(true);
-            UpdateSelCount();
+            ApplyHardwareState();   // also refreshes the counter; the slow probes re-run it once they finish
             _ = RunDetectionScanAsync();
         }
 
@@ -867,16 +921,43 @@ namespace Win11Optimizer
             _tooltip.BringToFront();
         }
 
+        // Live "what is it set to right now" lines for power-plan tweaks. Read off the UI thread the
+        // first time a tile is hovered, cached until the next run/undo. "" = nothing to show.
+        private readonly Dictionary<string, string> _nowCache = new();
+        private readonly HashSet<string> _nowPending = new();
+        private TweakTile _ttTile;
+
+        private async void LoadCurrentValueAsync(string key)
+        {
+            if (!_nowPending.Add(key)) return;
+            try
+            {
+                string now = await Task.Run(() => TweakDetector.CurrentSummary(key));
+                _nowCache[key] = now ?? "";
+                if (_ttTile?.Entry.TweakKey == key && _tooltip.Visible) ShowTooltip(_ttTile);
+            }
+            catch (Exception ex) { SessionLog.Write("TOOLTIP NOW", ex); }   // form closed mid-read
+            finally { _nowPending.Remove(key); }
+        }
+
         private void ShowTooltip(TweakTile tile)
         {
             _ttHideTimer.Stop();
             string raw = tile.Entry.WhatItChanges;
             if (string.IsNullOrEmpty(raw)) return;
 
+            _ttTile       = tile;
             _ttTitle.Text = tile.Entry.Name;
             // First line is the command / registry change, the rest explains it
             int split = raw.IndexOf('\n');
             _ttWhat.Text = split < 0 ? raw : raw[..split].Trim() + "\n\n" + raw[(split + 1)..].Trim();
+
+            if (tile.UnavailableReason != null) _ttWhat.Text += "\n\n⛔ Not available here: " + tile.UnavailableReason;
+            else if (TweakEngine.LaptopPower.ContainsKey(tile.Entry.TweakKey))
+            {
+                if (_nowCache.TryGetValue(tile.Entry.TweakKey, out string now)) { if (now.Length > 0) _ttWhat.Text += "\n\nNow (battery): " + now; }
+                else LoadCurrentValueAsync(tile.Entry.TweakKey);
+            }
             using (var g = _ttWhat.CreateGraphics())
                 _ttWhat.Height = Math.Max((int)g.MeasureString(_ttWhat.Text, _ttWhat.Font, _ttWhat.Width).Height + 8, 30);
             _tooltip.Height = _ttWhat.Bottom + 16;
@@ -898,6 +979,7 @@ namespace Win11Optimizer
         private void SetRunning(bool running, string runText = null)
         {
             _isRunning      = running;
+            if (!running) _nowCache.Clear();   // a run/undo just changed the power plan — re-read the tooltip values
             _runBtn.Enabled = !running;
             if (runText != null) _runBtn.Text = runText;
             UpdateSelCount();   // also gates Undo on _isRunning

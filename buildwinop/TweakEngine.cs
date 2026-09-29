@@ -50,6 +50,9 @@ namespace Win11Optimizer
         internal const string ClassicMenuKey   = CU + @"\" + ClassicMenuClsid + @"\InprocServer32";
         internal const string NaglePath        = @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
         internal const string MsiSub           = @"\MessageSignaledInterruptProperties", AffinitySub = @"\Affinity Policy";
+        internal const string AppPrivacy       = LmPol + @"\Windows\AppPrivacy";
+        internal const string MaintenanceKey   = LM + @"\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance";
+        internal const string GpuPrefKey       = CuSw + @"\DirectX\UserGpuPreferences";
 
         // ── BACKUP / RESTORE ──────────────────────────────────────────────
         public class BackupEntry
@@ -140,6 +143,12 @@ namespace Win11Optimizer
                         powerTouched = true;
                         res.Add(new TweakResult { Name = $"Restored power setting {p[3]} ({b.ValueName})", Success = code == 0 });
                     }
+                    else if (b.ValueKind == NicPowerKind)
+                    {
+                        string adapter = b.KeyPath[(b.KeyPath.IndexOf('\\') + 1)..].Replace("'", "''");
+                        int code = Proc.PowerShell($"Set-NetAdapterPowerManagement -Name '{adapter}' -{b.ValueName} {b.ValueData} -ErrorAction Stop").Code;
+                        res.Add(new TweakResult { Name = $"Restored {b.ValueName} on {adapter}", Success = code == 0 });
+                    }
                     else if (!b.Existed)
                     {
                         var (root, sub) = SplitPath(b.KeyPath);
@@ -165,7 +174,7 @@ namespace Win11Optimizer
                 catch (Exception ex) { res.Add(new TweakResult { Name = $"Restore {b.ValueName}", Error = ex.Message }); }
             }
 
-            if (powerTouched) Exec("powercfg /setactive SCHEME_CURRENT");
+            if (powerTouched) { Exec("powercfg /setactive SCHEME_CURRENT"); InvalidatePower(); }
             if (!_backups.Exists(b => Same(b.Category, category))) _appliedCategories.Remove(category);
             SaveBackups();
             return res;
@@ -255,53 +264,140 @@ namespace Win11Optimizer
             catch (Exception ex) { SessionLog.Write("POWERCFG", ex); return null; }
         }
 
-        // Reads the current AC/DC index of one power setting on the active scheme.
-        internal static (int? ac, int? dc) QueryPowerSetting(string subgroup, string setting)
+        // ── POWER SETTINGS SNAPSHOT ───────────────────────────────────────
+        // One `powercfg /qh` dump of the active scheme, parsed once and reused instead of one process
+        // per setting (the detection scan reads ~30). Parsed by structure (indentation, GUIDs, hex
+        // values) rather than by label, so it doesn't depend on Windows' display language.
+        internal sealed class PowerInfo
         {
-            try
-            {
-                string outp = Proc.Cmd($"powercfg /qh SCHEME_CURRENT {subgroup} {setting}").Out ?? "";
-                int? Parse(string label)
-                {
-                    var m = Regex.Match(outp, label + @"[^:]*:\s*0x([0-9a-fA-F]+)");
-                    return m.Success ? Convert.ToInt32(m.Groups[1].Value, 16) : null;
-                }
-                return (Parse("Current AC Power Setting Index"), Parse("Current DC Power Setting Index"));
-            }
-            catch (Exception ex) { SessionLog.Write("POWERCFG", ex); return (null, null); }
+            public int? Ac, Dc;
+            public readonly List<(int index, string name)> Options = new();
         }
+
+        private static Dictionary<string, PowerInfo> _powerSnap;
+        private static DateTime _powerSnapAt;
+        private static readonly object _powerLock = new();
+        private static readonly Regex HexRx = new(@":\s*0x([0-9a-fA-F]+)\s*$"), IndexRx = new(@":\s*(\d+)\s*$");
+
+        private static string PowerKey(string sub, string setting) => (sub + "|" + setting).ToLowerInvariant();
+
+        private static Dictionary<string, PowerInfo> ParsePowerDump(string dump)
+        {
+            var map = new Dictionary<string, PowerInfo>();
+            string sub = null;
+            PowerInfo cur = null;
+            int? pendingIndex = null;
+            var hex = new List<int>();
+
+            // The last two hex values in a block are always Current AC / Current DC — range settings
+            // list Minimum / Maximum / Increment (also hex) before them.
+            void Flush()
+            {
+                if (cur != null && hex.Count >= 2) (cur.Ac, cur.Dc) = (hex[^2], hex[^1]);
+                hex.Clear();
+            }
+
+            foreach (var raw in dump.Split('\n'))
+            {
+                string line = raw.TrimEnd('\r');
+                int indent = line.Length - line.TrimStart().Length;
+                var g = GuidRx.Match(line);
+                if (g.Success && indent == 2) { Flush(); cur = null; sub = g.Value; }
+                else if (g.Success && indent == 4)
+                {
+                    Flush();
+                    cur = new PowerInfo();
+                    if (sub != null) map[PowerKey(sub, g.Value)] = cur;
+                }
+                else if (cur != null)
+                {
+                    Match m;
+                    if ((m = HexRx.Match(line)).Success) hex.Add(Convert.ToInt32(m.Groups[1].Value, 16));
+                    else if ((m = IndexRx.Match(line)).Success) pendingIndex = int.Parse(m.Groups[1].Value);
+                    else if (pendingIndex != null && line.IndexOf(':') is var c and >= 0)
+                    {
+                        cur.Options.Add((pendingIndex.Value, line[(c + 1)..].Trim()));
+                        pendingIndex = null;
+                    }
+                }
+            }
+            Flush();
+            return map;
+        }
+
+        // Current AC/DC values (and option names) of one power setting; null when this device
+        // doesn't expose it. Cached briefly — writes update the cache in place.
+        internal static PowerInfo QueryPower(string subgroup, string setting)
+        {
+            lock (_powerLock)
+            {
+                if (_powerSnap == null || DateTime.UtcNow - _powerSnapAt > TimeSpan.FromSeconds(10))
+                {
+                    try
+                    {
+                        _powerSnap   = ParsePowerDump(Proc.Cmd("powercfg /qh SCHEME_CURRENT").Out ?? "");
+                        _powerSnapAt = DateTime.UtcNow;
+                    }
+                    catch (Exception ex) { SessionLog.Write("POWERCFG", ex); return null; }
+                }
+                return _powerSnap.TryGetValue(PowerKey(subgroup, setting), out var info) ? info : null;
+            }
+        }
+
+        internal static void InvalidatePower() { lock (_powerLock) _powerSnap = null; }
+
+        // ── LAPTOP POWER-PLAN TWEAKS ──────────────────────────────────────
+        // One battery-side (DC) value. Ok decides whether the current value already satisfies the
+        // tweak (so nothing is written or backed up, and a stricter user setting is never loosened);
+        // Fmt/Short render it for the tooltip. ByName picks the option whose driver-supplied name
+        // contains the text (Intel/AMD slider indexes differ by vendor) instead of a fixed Dc.
+        internal sealed record PowerPart(string Sub, string Setting, int Dc, string Label, string Short,
+            Func<int, string> Fmt = null, Func<int, int, bool> Ok = null, string ByName = null)
+        {
+            public bool Satisfied(int cur, int target) => Ok != null ? Ok(cur, target) : cur == target;
+            public string Show(PowerInfo info, int v) =>
+                Fmt?.Invoke(v) ?? info?.Options.FirstOrDefault(o => o.index == v).name ?? v.ToString();
+        }
+
+        internal static int? PowerTarget(PowerPart p, PowerInfo info) =>
+            p.ByName == null ? p.Dc
+            : info.Options.Where(o => o.name.Contains(p.ByName, StringComparison.OrdinalIgnoreCase))
+                          .Select(o => (int?)o.index).FirstOrDefault();
+
+        private static string Pct(int v)  => v + "%";
+        private static string Secs(int v) => v == 0 ? "never" : v < 60 ? v + " s" : $"{v / 60.0:0.#} min";
+        private static Func<int, string> Opts(params string[] names) =>
+            v => v >= 0 && v < names.Length ? names[v] : v.ToString();
+
+        // "Already good enough" tests: (current, target) → satisfied?
+        private static bool Within(int cur, int max) => cur > 0 && cur <= max;   // timeouts — 0 means never
+        private static bool AtMost(int cur, int max) => cur <= max;
+        private static bool AtLeast(int cur, int min) => cur >= min;
+        private static bool NotNothing(int cur, int _) => cur != 0;               // lid: anything but "Do nothing"
 
         // Sets a power setting's battery (DC) value on the active scheme, recording the previous
         // value so Undo can put it back. Plugged-in (AC) behaviour is never touched.
-        private static void SetPower(string subgroup, string setting, int value, string friendlyName, bool optional = false)
+        private enum PowerResult { Set, Already, Unsupported, Failed }
+
+        private static PowerResult ApplyPowerPart(PowerPart p, string scheme)
         {
-            string scheme = ActiveSchemeGuid();
-            if (scheme == null) { Report(friendlyName, false, "Could not read active power scheme"); return; }
+            var info = QueryPower(p.Sub, p.Setting);
+            if (info?.Dc is not int cur || PowerTarget(p, info) is not int target) return PowerResult.Unsupported;
 
-            var (curAc, curDc) = QueryPowerSetting(subgroup, setting);
-            if (curAc == null && curDc == null)
-            {
-                // optional: e.g. E-core EPP on a non-hybrid CPU — nothing to do
-                if (!optional) Report(friendlyName, false, "Setting not supported on this device");
-                return;
-            }
+            if (p.Satisfied(cur, target)) { Report($"{p.Label} (already set)"); return PowerResult.Already; }
 
-            string keyPath = $@"POWERCFG\{scheme}\{subgroup}\{setting}";
-            if (curDc != null && _currentCategory.Length > 0 && !AlreadyBackedUp(_currentCategory, keyPath, "DC"))
+            string keyPath = $@"POWERCFG\{scheme}\{p.Sub}\{p.Setting}";
+            if (_currentCategory.Length > 0 && !AlreadyBackedUp(_currentCategory, keyPath, "DC"))
                 _backups.Add(new BackupEntry
                 {
                     Category = _currentCategory, KeyPath = keyPath, ValueName = "DC",
-                    ValueData = curDc.Value.ToString(), ValueKind = PowerCfgKind, Existed = true
+                    ValueData = cur.ToString(), ValueKind = PowerCfgKind, Existed = true
                 });
-            RunCommand($"powercfg /setdcvalueindex {scheme} {subgroup} {setting} {value} && powercfg /setactive SCHEME_CURRENT", friendlyName);
-        }
-
-        // Only shortens a battery timeout — never lengthens one the user already set lower.
-        private static void CapTimeout(string subgroup, string setting, int maxSeconds, string friendlyName, string what)
-        {
-            var (_, cur) = QueryPowerSetting(subgroup, setting);
-            if (cur == null || cur == 0 || cur > maxSeconds) SetPower(subgroup, setting, maxSeconds, friendlyName);
-            else Report($"{what} already {cur / 60.0:0.#} min or less");
+            int code = Exec($"powercfg /setdcvalueindex {scheme} {p.Sub} {p.Setting} {target} && powercfg /setactive SCHEME_CURRENT");
+            Report(p.Label, code == 0, code == 0 ? null : $"exit code {code}");
+            if (code != 0) return PowerResult.Failed;
+            info.Dc = target;
+            return PowerResult.Set;
         }
 
         // Power setting GUIDs (subgroup, setting) — verified with powercfg /qh on Windows 11
@@ -331,23 +427,209 @@ namespace Win11Optimizer
         private const string VideoQualityBias = "10778347-1370-4ee0-8bbd-33bdacaade49";
         private const string SubBattery       = "e73a048d-bf27-4f12-9731-8b2076e8891f";
         private const string BatActionCrit    = "637ea02f-bbcb-4015-8e2c-a1c7b9c0b546";
+        private const string BatLevelLow      = "8183ba9a-e910-48da-8769-14ae6dc1170a";
+        private const string BatLevelCrit     = "9a66d8d7-4ff7-4ef9-b5a2-5a326ca2a469";
+        private const string HibernateIdle    = "9d7815a6-7ee4-497e-8888-515a05f02364";
+        private const string UnattendSleep    = "7bc4a2f9-d8fc-4469-b07b-33eb785aaca0";
+        private const string VideoDim         = "17aaa29b-8b43-4b94-aafe-35f64daaf1ee";
+        private const string VideoConLock     = "8ec4b3a5-6868-48c2-be75-4f3044be88a7";
+        private const string VideoNormalLevel = "aded5e82-b909-4619-9949-f5d71dac0bcb";
+        private const string ProcThrottleMin  = "893dee8e-2bef-41e0-89c6-b55d0929964c";
+        private const string SysCoolPol       = "94d3a615-a899-4ac5-ae2b-e4d8f634367f";
+        private const string SubButtons       = "4f971e89-eebd-4455-a8de-9e59040e7347";
+        private const string LidAction        = "5ca83367-6e45-459f-a27b-476b1d01c936";
+        private const string SubDisk          = "0012ee47-9041-4b5d-9b77-535fba8b1442";
+        private const string DiskIdle         = "6738e2c4-e8a5-4a42-b16a-e040e769756e";
+        private const string SubSlideshow     = "0d7dbae2-4294-402a-ba8e-26777e8488cd";
+        private const string Slideshow        = "309dce9b-bef4-4119-9921-a851fb12f0f4";
+        private const string MediaSharing     = "03680956-93bc-4294-bba6-4e0f09bb717f";
+        private const string SubGraphics      = "5fb4938d-1ee8-4b0f-9a3c-5036b0ab995c";
+        private const string GpuPrefPolicy    = "dd848b2a-8a5d-4451-9ae2-39cd41658f6c";
+        private const string SubIntelGfx      = "44f3beca-a7c0-460e-9df2-bb8b99e0cba6";
+        private const string IntelGfxPower    = "3619c3f2-afb2-4afc-b0e9-e7fef372de36";
+        private const string SubAmdSlider     = "c763b4ec-0e50-4b6b-9bed-2b92a6ee884e";
+        private const string AmdOverlay       = "7ec1751b-60ed-4588-afb5-9819d3d77d90";
 
-        // Laptop power-plan tweaks: primary (subgroup, setting, battery value, label). TweakDetector
-        // compares the active plan's DC value against the same entry.
-        internal static readonly Dictionary<string, (string sub, string setting, int dc, string label)> LaptopPower = new()
+        // Laptop power-plan tweaks, one entry per tweak: the first part is the headline setting,
+        // the rest are companions that only exist on some hardware (a tweak fails only if NONE of
+        // its parts are supported here). TweakDetector and the tooltip's "now" line read the same table.
+        private static PowerPart P(string sub, string setting, int dc, string label, string shortName,
+            Func<int, string> fmt = null, Func<int, int, bool> ok = null, string byName = null) =>
+            new(sub, setting, dc, label, shortName, fmt, ok, byName);
+
+        internal static readonly Dictionary<string, PowerPart[]> LaptopPower = new()
         {
-            ["Lap_EnergySaver"]    = (SubEnergySaver, EsBattThreshold, 30, "Energy Saver turns on at 30%"),
-            ["Lap_NoTurbo"]        = (SubProcessor,   PerfBoostMode,   0,  "Disable CPU turbo boost on battery"),
-            ["Lap_CpuEfficiency"]  = (SubProcessor,   PerfEpp,         80, "CPU energy preference → efficiency (battery)"),
-            ["Lap_AdaptiveBright"] = (SubVideo,       AdaptBright,     1,  "Adaptive brightness on battery"),
-            ["Lap_PcieAspm"]       = (SubPciExpress,  Aspm,            2,  "PCIe link state: maximum power savings (battery)"),
-            ["Lap_WifiPowerSave"]  = (SubWireless,    WifiPowerMode,   3,  "Wi-Fi: maximum power saving (battery)"),
-            ["Lap_UsbSuspend"]     = (SubUsb,         UsbSuspend,      1,  "USB selective suspend on battery"),
-            ["Lap_WakeTimers"]     = (SubSleep,       RtcWake,         0,  "Disable wake timers on battery"),
-            ["Lap_StandbyNetwork"] = (SubNone,        StandbyNetwork,  0,  "Disconnect network in Modern Standby (battery)"),
-            ["Lap_VideoBattery"]   = (SubMultimedia,  VideoPlayback,   2,  "Video playback: optimise for battery"),
-            ["Lap_CritHibernate"]  = (SubBattery,     BatActionCrit,   2,  "Critical battery action → Hibernate"),
+            ["Lap_EnergySaver"] =
+            [
+                P(SubEnergySaver, EsBattThreshold, 30, "Energy Saver turns on at 30%", "Energy Saver at", Pct, AtLeast),
+                P(SubEnergySaver, EsBrightness,    50, "Energy Saver dims screen to 50%", "Energy Saver brightness", Pct, AtMost),
+            ],
+            ["Lap_NoTurbo"] =
+            [
+                P(SubProcessor, PerfBoostMode, 0, "Disable CPU turbo boost on battery", "Boost mode",
+                  Opts("Disabled", "Enabled", "Aggressive", "Efficient enabled", "Efficient aggressive", "Aggressive at guaranteed", "Efficient aggressive at guaranteed")),
+            ],
+            ["Lap_CpuEfficiency"] =
+            [
+                P(SubProcessor, PerfEpp,       80, "CPU energy preference → efficiency (battery)", "Energy preference", Pct, AtLeast),
+                P(SubProcessor, PerfEppClass1, 80, "E-core energy preference → efficiency (battery)", "E-core preference", Pct, AtLeast),
+            ],
+            ["Lap_ScreenSleep"] =
+            [
+                P(SubVideo, VideoIdle,   180, "Screen off after 3 min on battery", "Screen off after", Secs, Within),
+                P(SubSleep, StandbyIdle, 600, "Sleep after 10 min on battery",     "Sleep after",      Secs, Within),
+            ],
+            ["Lap_AdaptiveBright"] =
+            [
+                P(SubVideo, AdaptBright, 1, "Adaptive brightness on battery", "Adaptive brightness", Opts("Off", "On")),
+            ],
+            ["Lap_PcieAspm"] =
+            [
+                P(SubPciExpress, Aspm, 2, "PCIe link state: maximum power savings (battery)", "Link state power", Opts("Off", "Moderate", "Maximum savings")),
+            ],
+            ["Lap_WifiPowerSave"] =
+            [
+                P(SubWireless, WifiPowerMode, 3, "Wi-Fi: maximum power saving (battery)", "Wi-Fi power saving",
+                  Opts("Maximum performance", "Low", "Medium", "Maximum power saving")),
+            ],
+            ["Lap_UsbSuspend"] =
+            [
+                P(SubUsb, UsbSuspend, 1, "USB selective suspend on battery", "USB suspend", Opts("Disabled", "Enabled")),
+            ],
+            ["Lap_WakeTimers"] =
+            [
+                P(SubSleep, RtcWake, 0, "Disable wake timers on battery", "Wake timers", Opts("Disabled", "Enabled", "Important only")),
+            ],
+            ["Lap_StandbyNetwork"] =
+            [
+                P(SubNone, StandbyNetwork, 0, "Disconnect network in Modern Standby (battery)", "Standby network", Opts("Disconnected", "Connected", "Managed by Windows")),
+            ],
+            ["Lap_VideoBattery"] =
+            [
+                P(SubMultimedia, VideoPlayback,    2, "Video playback: optimise for battery", "Video playback", Opts("Video quality", "Balanced", "Power savings")),
+                P(SubMultimedia, VideoQualityBias, 0, "Video quality bias: power saving", "Quality bias", Opts("Power-saving", "Performance")),
+            ],
+            ["Lap_CritHibernate"] =
+            [
+                P(SubBattery, BatActionCrit, 2, "Critical battery action → Hibernate", "At critical battery", Opts("Do nothing", "Sleep", "Hibernate", "Shut down")),
+            ],
+            ["Lap_HibernateAfter"] =
+            [
+                P(SubSleep, HibernateIdle, 3600, "Hibernate after 60 min asleep on battery", "Hibernate after", Secs, Within),
+            ],
+            ["Lap_UnattendedSleep"] =
+            [
+                P(SubSleep, UnattendSleep, 60, "Sleep again 1 min after an unattended wake (battery)", "Unattended sleep after", Secs, Within),
+            ],
+            ["Lap_DimTimeout"] =
+            [
+                P(SubVideo, VideoDim, 60, "Dim display after 1 min on battery", "Dim after", Secs, Within),
+            ],
+            ["Lap_BatteryBrightness"] =
+            [
+                P(SubVideo, VideoNormalLevel, 40, "Display brightness capped at 40% on battery", "Brightness", Pct, AtMost),
+            ],
+            ["Lap_LockScreenOff"] =
+            [
+                P(SubVideo, VideoConLock, 30, "Lock-screen display off after 30 s on battery", "Lock screen off after", Secs, Within),
+            ],
+            ["Lap_MinProcState"] =
+            [
+                P(SubProcessor, ProcThrottleMin, 5, "Minimum processor state 5% on battery", "Min CPU state", Pct, AtMost),
+                P(SubProcessor, SysCoolPol,      0, "Passive cooling on battery", "Cooling", Opts("Passive", "Active")),
+            ],
+            ["Lap_LidClose"] =
+            [
+                P(SubButtons, LidAction, 1, "Lid close → Sleep on battery", "Lid close", Opts("Do nothing", "Sleep", "Hibernate", "Shut down"), NotNothing),
+            ],
+            ["Lap_LowBattery"] =
+            [
+                P(SubBattery, BatLevelLow,  15, "Low battery warning at 15%", "Low battery at", Pct, AtLeast),
+                P(SubBattery, BatLevelCrit, 7,  "Critical battery action at 7%", "Critical at", Pct, AtLeast),
+            ],
+            ["Lap_Slideshow"] =
+            [
+                P(SubSlideshow,  Slideshow,    1, "Desktop slide show paused on battery", "Slide show", Opts("Available", "Paused")),
+                P(SubMultimedia, MediaSharing, 0, "Sleep allowed while sharing media (battery)", "Media sharing", Opts("Allow sleep", "Prevent sleep", "Away mode")),
+            ],
+            ["Lap_DiskIdle"] =
+            [
+                P(SubDisk, DiskIdle, 300, "Hard disk off after 5 min on battery", "Disk off after", Secs, Within),
+            ],
+            ["Lap_GraphicsSlider"] =
+            [
+                P(SubIntelGfx,   IntelGfxPower, 0, "Intel graphics power → maximum battery life", "Intel graphics", byName: "battery"),
+                P(SubAmdSlider,  AmdOverlay,    0, "AMD power slider → battery saver", "AMD slider", byName: "battery"),
+            ],
+            // Companion: the powercfg side of "prefer integrated GPU" (the per-app side is in ApplyGpuPreferences)
+            ["Lap_GpuPowerSaving"] =
+            [
+                P(SubGraphics, GpuPrefPolicy, 1, "GPU preference policy → low power (battery)", "GPU policy", Opts("None", "Low power")),
+            ],
         };
+
+        // Need hibernation on — refuse rather than silently re-enabling what Performance → Disable Hibernation turned off
+        private static readonly HashSet<string> NeedsHibernation = new() { "Lap_CritHibernate", "Lap_HibernateAfter" };
+
+        // True when the driver exposes an Intel or AMD power slider in the active plan
+        internal static bool HasGraphicsSlider() =>
+            QueryPower(SubIntelGfx, IntelGfxPower) != null || QueryPower(SubAmdSlider, AmdOverlay) != null;
+
+        // ── PER-APP GPU PREFERENCE ────────────────────────────────────────
+        // Settings → System → Display → Graphics: "GpuPreference=1;" = power saving (the integrated GPU).
+        // Each app's original value is backed up like any registry value, so Undo removes what we added.
+        private static void ApplyGpuPreferences()
+        {
+            var apps = Hardware.GpuPreferenceApps(includeStoreTeams: true);
+            if (apps.Count == 0) { Report("Integrated-GPU preference: no browsers or Teams found to configure"); return; }
+            foreach (var exe in apps)
+                SetRegistry(GpuPrefKey, exe, "GpuPreference=1;", RegistryValueKind.String, "Prefer integrated GPU: " + Path.GetFileName(exe));
+        }
+
+        // ── NETWORK ADAPTER POWER MANAGEMENT ──────────────────────────────
+        // Undo has no registry value to put back, so each changed property is backed up as its own
+        // entry (KeyPath = NICPOWER\<adapter>, ValueName = property, ValueData = original) and
+        // restored through Set-NetAdapterPowerManagement in RestoreCategory.
+        private const string NicPowerKind = "NicPower";
+        private static readonly (string prop, string want, string orig)[] NicProps =
+        {
+            ("WakeOnMagicPacket",       "Disabled", "Enabled"),
+            ("WakeOnPattern",           "Disabled", "Enabled"),
+            ("DeviceSleepOnDisconnect", "Enabled",  "Disabled"),
+        };
+
+        private static void ApplyNicPower()
+        {
+            const string name = "Network adapter power management";
+            try
+            {
+                var (code, outp, _) = Proc.PowerShell(
+                    "Get-NetAdapter -Physical | ForEach-Object { $p = Get-NetAdapterPowerManagement -Name $_.Name -ErrorAction SilentlyContinue; " +
+                    "if ($p) { $_.Name + '|' + $p.WakeOnMagicPacket + '|' + $p.WakeOnPattern + '|' + $p.DeviceSleepOnDisconnect } }");
+                var rows = (outp ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                       .Select(l => l.Split('|')).Where(a => a.Length == 4 && !a[0].Contains('"')).ToList();
+                if (code != 0 || rows.Count == 0) { Report(name, false, "No adapter driver exposes power-management settings"); return; }
+
+                foreach (var row in rows)
+                {
+                    // Only touch a property that's currently in the opposite state — "Unsupported" stays untouched
+                    var changes = NicProps.Where((p, i) => row[i + 1].Equals(p.orig, StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (changes.Count == 0) { Report($"{row[0]}: already set (or not supported by the driver)"); continue; }
+
+                    string keyPath = @"NICPOWER\" + row[0];
+                    foreach (var c in changes.Where(c => _currentCategory.Length > 0 && !AlreadyBackedUp(_currentCategory, keyPath, c.prop)))
+                        _backups.Add(new BackupEntry
+                        {
+                            Category = _currentCategory, KeyPath = keyPath, ValueName = c.prop,
+                            ValueData = c.orig, ValueKind = NicPowerKind, Existed = true
+                        });
+                    RunPowerShell($"Set-NetAdapterPowerManagement -Name '{row[0].Replace("'", "''")}' " +
+                                  string.Join(" ", changes.Select(c => $"-{c.prop} {c.want}")) + " -ErrorAction Stop",
+                                  $"Power management: {row[0]}");
+                }
+            }
+            catch (Exception ex) { Report(name, false, ex.Message); }
+        }
 
         // ── HOSTS BLOCK LIST ──────────────────────────────────────────────
         private static readonly string[] TelemetryHosts =
@@ -542,7 +824,7 @@ namespace Win11Optimizer
                         "ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName SetTcpipNetbios -Arguments @{TcpipNetbiosOptions=0} | Out-Null }",
                         "Restore NetBIOS over TCP/IP default");
                     break;
-                // Laptop: registry + powercfg backups cover every tweak
+                // Laptop: registry, powercfg and adapter-power backups cover every tweak
             }
             r.AddRange(_results);
             return r;
@@ -657,20 +939,21 @@ namespace Win11Optimizer
         // ── INDIVIDUAL TWEAKS (by TweakKey) ───────────────────────────────
         private static void ApplyTweak(string key)
         {
-            if (LaptopPower.TryGetValue(key, out var lp))
+            if (LaptopPower.TryGetValue(key, out var parts))
             {
-                // Needs hibernation — refuses instead of silently re-enabling it (Performance → Disable Hibernation turns it off)
-                if (key == "Lap_CritHibernate" && TweakDetector.HibernationEnabled() == false)
-                    Report("Hibernate on critical battery", false,
-                        "Hibernation is off (Performance → Disable Hibernation). Run 'powercfg -h on' first.");
-                else SetPower(lp.sub, lp.setting, lp.dc, lp.label);
-                // Secondary settings that only exist on some hardware
-                switch (key)
+                string headline = parts[0].Label;
+                string scheme   = ActiveSchemeGuid();
+                if (NeedsHibernation.Contains(key) && TweakDetector.HibernationEnabled() == false)
+                    Report(headline, false, "Hibernation is off (Performance → Disable Hibernation). Run 'powercfg -h on' first.");
+                else if (scheme == null)
+                    Report(headline, false, "Could not read active power scheme");
+                else
                 {
-                    case "Lap_EnergySaver":   SetPower(SubEnergySaver, EsBrightness,     50, "Energy Saver dims screen to 50%", optional: true); break;
-                    case "Lap_CpuEfficiency": SetPower(SubProcessor,   PerfEppClass1,    80, "E-core energy preference → efficiency (battery)", optional: true); break;
-                    case "Lap_VideoBattery":  SetPower(SubMultimedia,  VideoQualityBias, 0,  "Video quality bias: power saving", optional: true); break;
+                    int supported = parts.Count(p => ApplyPowerPart(p, scheme) != PowerResult.Unsupported);
+                    // The GPU preference tweak also has a per-app half, so an older Windows without the policy isn't a failure
+                    if (supported == 0 && key != "Lap_GpuPowerSaving") Report(headline, false, "Setting not supported on this device");
                 }
+                if (key == "Lap_GpuPowerSaving") ApplyGpuPreferences();
                 return;
             }
 
@@ -883,11 +1166,26 @@ namespace Win11Optimizer
                     Dw(BoostModeKey, "Attributes", 2, "Unhide Processor Performance Boost Mode"); break;
 
                 // ── LAPTOP (registry-based; power-plan ones handled above) ─
-                case "Lap_ScreenSleep":
-                    CapTimeout(SubVideo, VideoIdle,   180, "Screen off after 3 min on battery", "Screen timeout");
-                    CapTimeout(SubSleep, StandbyIdle, 600, "Sleep after 10 min on battery",     "Sleep timeout"); break;
                 case "Lap_IndexOnBattery":  Dw(LmPol + @"\Windows\Windows Search", "PreventIndexOnBattery", 1, "Pause search indexing on battery"); break;
                 case "Lap_BackgroundApps":  Dw(LmPol + @"\Windows\AppPrivacy", "LetAppsRunInBackground", 2, "Block Store apps running in background"); break;
+                case "Lap_VoiceActivation":
+                    Dw(AppPrivacy, "LetAppsActivateWithVoice",          2, "Block apps activating with voice");
+                    Dw(AppPrivacy, "LetAppsActivateWithVoiceAboveLock", 2, "Block voice activation above the lock screen"); break;
+                case "Lap_CrossDevice":
+                    Dw(LmPol + @"\Windows\System", "EnableCdp", 0, "Disable cross-device experiences (policy)");
+                    Dw(CuCv + @"\CDP", "CdpSessionUserAuthzPolicy",       0, "Share across devices: off");
+                    Dw(CuCv + @"\CDP", "NearShareChannelUserAuthzPolicy", 0, "Nearby sharing: off");
+                    Dw(CuCv + @"\CDP", "RomeSdkChannelUserAuthzPolicy",    0, "Cross-device channel: off"); break;
+                case "Lap_SearchHighlights":
+                    Dw(CuCv + @"\SearchSettings", "IsDynamicSearchBoxEnabled", 0, "Disable Search Highlights");
+                    Dw(LmPol + @"\Windows\Windows Search", "EnableDynamicContentInWSB", 0, "Disable Search Highlights (policy)"); break;
+                case "Lap_SettingsSync":
+                    Dw(LmPol + @"\Windows\SettingSync", "DisableSettingSync",             2, "Disable settings sync");
+                    Dw(LmPol + @"\Windows\SettingSync", "DisableSettingSyncUserOverride", 1, "Lock settings sync off"); break;
+                case "Lap_MaintenanceWake":
+                    Dw(MaintenanceKey, "WakeUp", 0, "Automatic Maintenance: don't wake the PC");
+                    Dw(LmPol + @"\Windows\ScheduledMaintenance", "WakeUp", 0, "Automatic Maintenance wake-up (policy)"); break;
+                case "Lap_NicPower":        ApplyNicPower(); break;
                 case "Lap_EdgeBackground":
                     Dw(LmPol + @"\Edge", "StartupBoostEnabled",   0, "Disable Edge Startup Boost");
                     Dw(LmPol + @"\Edge", "BackgroundModeEnabled", 0, "Stop Edge running after close"); break;
