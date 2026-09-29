@@ -1,17 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Drawing;
-using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using CornSystems;   // shared Dpi helper — byte-identical across Corn Systems repos
 
 namespace Win11Optimizer
 {
@@ -71,9 +60,9 @@ namespace Win11Optimizer
                 "Reduces CPU overhead when RAM is under pressure",
                 "Runs: Disable-MMAgent -MemoryCompression + Disable-MMAgent -PageCombining (PowerShell)\nPage combining wastes CPU cycles merging identical RAM pages — low value on 16GB+ systems."),
             E("Performance","⏰",true,"Perf_TimerRes",
-                "Set Timer Resolution to 0.5ms",
-                "Calls timeBeginPeriod(1) + registry key for sub-ms scheduler ticks",
-                "Calls timeBeginPeriod(1) via P/Invoke + sets GlobalTimerResolutionRequests = 1"),
+                "Global 1ms Timer Resolution",
+                "Lets games' 1ms timer requests apply system-wide again (Win11 22H2+)",
+                "Sets GlobalTimerResolutionRequests = 1 in Session Manager\\kernel\nSince Windows 11 22H2, a timer-resolution request from a minimised or background app no longer applies globally. This restores the old behaviour so tools/games that request 1ms keep it. Raises idle power draw — skip this on laptops."),
 
             E("Privacy","📡",true,"Priv_Telemetry",
                 "Disable Telemetry",
@@ -142,7 +131,7 @@ namespace Win11Optimizer
             E("Privacy","🚫",true,"Priv_HostsBlock",
                 "Block Telemetry Hosts",
                 "Adds 35 Microsoft telemetry domains to the hosts file (0.0.0.0)",
-                "Appends 35 entries to C:\\Windows\\System32\\drivers\\etc\\hosts"),
+                "Appends 35 entries to C:\\Windows\\System32\\drivers\\etc\\hosts\nNote: Microsoft Defender may flag this as SettingsModifier:Win32/HostsFileHijack and offer to revert it — that's expected for any hosts-file telemetry block."),
 
             E("Responsiveness","🖱",true,"Resp_MenuDelay",
                 "Instant Menu Show",
@@ -322,11 +311,11 @@ namespace Win11Optimizer
             E("Advanced","📨",false,"Adv_MsiMode",
                 "Enable MSI Mode (GPU)",
                 "Switches GPU interrupts from legacy line-based to Message Signaled",
-                "Sets MSISupported = 1 + MessageNumberLimit = 0x10 in GPU class driver key\nMSI mode routes GPU interrupts more efficiently, reducing DPC latency vs. legacy line-based interrupt mode. Only affects the primary GPU adapter slot (0000)."),
+                "Sets MSISupported = 1 under Enum\\PCI\\<GPU>\\Device Parameters\\Interrupt Management\\MessageSignaledInterruptProperties\nMSI mode routes GPU interrupts more efficiently, reducing DPC latency vs. legacy line-based interrupt mode. Applied to every display adapter (iGPU + dGPU). Most modern GPUs already default to MSI."),
             E("Advanced","📬",false,"Adv_IrqAffinity",
                 "IRQ Affinity — Spread GPU Interrupts",
                 "Sets GPU DevicePolicy to spread MSI-X interrupts across all P-cores",
-                "Sets DevicePolicy = 4 (IrqPolicySpreadMessagesAcrossAllProcessors) in GPU Interrupt Management\\Affinity Policy\nFor MSI-X capable GPUs — distributes interrupt handling across all processor cores instead of pinning to core 0."),
+                "Sets DevicePolicy = 5 (IrqPolicySpreadMessagesAcrossAllProcessors) in each GPU's Interrupt Management\\Affinity Policy\nFor MSI-X capable GPUs — distributes interrupt handling across all processor cores instead of pinning to core 0."),
             E("Advanced","🕐",false,"Adv_TscSync",
                 "TSC Sync Policy: Legacy",
                 "Forces legacy TSC synchronisation — reduces scheduling jitter",
@@ -361,10 +350,116 @@ namespace Win11Optimizer
                 "Reduce TCP TIME_WAIT Delay",
                 "Cuts TIME_WAIT connection hold from 240s to 30s",
                 "Sets TcpTimedWaitDelay = 30 in HKLM\\...\\Tcpip\\Parameters\nWindows holds closed TCP connections in TIME_WAIT for 240 seconds by default. Reducing to 30s frees ports faster on systems making many short-lived connections (game launchers, streaming, APIs)."),
+
+            // ── v1.5 additions ─────────────────────────────────────────────────────
+            E("Performance","🧩",true,"Perf_Widgets",
+                "Disable Widgets Board",
+                "Removes the Widgets panel and its background WebView processes",
+                "Sets AllowNewsAndInterests = 0 in HKLM\\SOFTWARE\\Policies\\Microsoft\\Dsh\nWidgets keeps several Edge WebView2 processes alive in the background for news/weather feeds, costing RAM and CPU wake-ups. The policy removes the board and the taskbar button."),
+            E("Privacy","🎯",true,"Priv_TailoredExp",
+                "Disable Tailored Experiences",
+                "Stops Microsoft using diagnostic data for personalised tips and ads",
+                "Sets TailoredExperiencesWithDiagnosticDataEnabled = 0 (user) + DisableTailoredExperiencesWithDiagnosticData = 1 (policy)"),
+            E("Privacy","✍",true,"Priv_InkTyping",
+                "Disable Inking & Typing Data Collection",
+                "Stops Windows harvesting what you type and ink to build a personal dictionary",
+                "Sets RestrictImplicitInkCollection = 1, RestrictImplicitTextCollection = 1, HarvestContacts = 0, AcceptedPrivacyPolicy = 0\nSame as Settings → Privacy → Inking & typing personalization → Off."),
+            E("Responsiveness","📋",false,"Resp_ClassicContext",
+                "Classic Right-Click Menu",
+                "Brings back the full Windows 10 context menu — no more 'Show more options'",
+                "Creates HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32 with an empty default value\nThe Win11 compact menu adds a click (and a noticeable delay) for most shell extensions. Undo deletes the key. Needs an Explorer restart."),
+            E("Responsiveness","🛑",false,"Resp_EndTask",
+                "Add 'End Task' to Taskbar",
+                "Right-click a taskbar app → End task, no Task Manager needed",
+                "Sets TaskbarEndTask = 1 in Explorer\\Advanced\\TaskbarDeveloperSettings\nBuilt-in Windows 11 23H2+ feature normally hidden under Settings → System → For developers."),
+            E("Gaming","⌨",false,"Game_StickyKeys",
+                "Disable Sticky / Filter Keys Hotkeys",
+                "Stops the 5×Shift popup from yanking you out of games",
+                "Sets StickyKeys Flags = 506, ToggleKeys Flags = 58, Keyboard Response Flags = 122\nOnly the keyboard shortcuts are disabled — the accessibility features themselves still work from Settings."),
+            E("Network","📤",false,"Net_DeliveryOpt",
+                "Disable Delivery Optimization P2P",
+                "Stops Windows uploading updates to other PCs over your connection",
+                "Sets DODownloadMode = 0 (HTTP only) in DeliveryOptimization policy\nUpdates still download normally from Microsoft — your PC just stops seeding them to LAN/internet peers."),
+
+            // ── LAPTOP (battery life) ──────────────────────────────────────────────
+            // Power-plan tweaks change only the ON BATTERY (DC) side of the active plan —
+            // plugged-in performance is untouched. All are undoable.
+            E("Laptop","🪫",false,"Lap_EnergySaver",
+                "Energy Saver at 30%",
+                "Turns on Energy Saver at 30% instead of 20% and dims the screen harder",
+                "powercfg: Energy Saver → Charge level (ESBATTTHRESHOLD) = 30, Display brightness weight (ESBRIGHTNESS) = 50 on battery\nEnergy Saver throttles background activity, sync and notifications. Kicking in earlier buys the most time for the least effort."),
+            E("Laptop","🐢",false,"Lap_NoTurbo",
+                "Disable Turbo Boost on Battery",
+                "Stops CPU boost clocks when unplugged — big battery + heat win",
+                "powercfg: Processor performance boost mode (PERFBOOSTMODE) = Disabled on battery\nBoost clocks cost disproportionately more power than they give back. Typical result: 15–30% longer battery on light work, cooler and quieter. Plugged-in boost is unaffected."),
+            E("Laptop","🍃",false,"Lap_CpuEfficiency",
+                "CPU Energy Preference: Efficiency",
+                "Tells the CPU to favour efficiency over speed when unplugged",
+                "powercfg: Energy performance preference (PERFEPP) = 80% on battery (+ E-cores on hybrid CPUs)\n0 = max performance, 100 = max efficiency. Balanced defaults to ~50 on battery. Intel Speed Shift / AMD CPPC use this hint to pick clocks."),
+            E("Laptop","🌙",false,"Lap_ScreenSleep",
+                "Shorter Screen & Sleep Timeouts",
+                "Screen off after 3 min, sleep after 10 min on battery",
+                "powercfg: VIDEOIDLE = 180s, STANDBYIDLE = 600s on battery\nThe display is the single biggest battery drain. Only shortens timeouts — if yours are already lower they're left alone."),
+            E("Laptop","🔆",false,"Lap_AdaptiveBright",
+                "Adaptive Brightness on Battery",
+                "Lets the ambient light sensor lower brightness when unplugged",
+                "powercfg: Enable adaptive brightness (ADAPTBRIGHT) = On for battery\nNo effect on laptops without an ambient light sensor."),
+            E("Laptop","🔌",false,"Lap_PcieAspm",
+                "PCIe Link Power: Maximum Savings",
+                "Lets NVMe, Wi-Fi and GPU links drop into low-power states on battery",
+                "powercfg: PCI Express → Link State Power Management (ASPM) = Maximum power savings on battery\nOne of the biggest idle-drain fixes on laptops with a dGPU. Very rarely an old NVMe drive or Wi-Fi card misbehaves — Undo restores it."),
+            E("Laptop","📶",false,"Lap_WifiPowerSave",
+                "Wi-Fi Maximum Power Saving",
+                "Puts the wireless adapter in its deepest power-save mode on battery",
+                "powercfg: Wireless Adapter Settings → Power Saving Mode = Maximum Power Saving on battery\nCan add a little latency to online games or calls on battery — plugged-in Wi-Fi is unaffected."),
+            E("Laptop","🔋",false,"Lap_UsbSuspend",
+                "USB Selective Suspend on Battery",
+                "Idle USB devices power down when unplugged",
+                "powercfg: USB selective suspend = Enabled on battery\nWindows default, but many 'gaming' tweak packs switch it off — this puts it back."),
+            E("Laptop","⏰",false,"Lap_WakeTimers",
+                "Disable Wake Timers on Battery",
+                "Stops scheduled tasks & updates waking the laptop in your bag",
+                "powercfg: Allow wake timers (RTCWAKE) = Disable on battery\nPrevents the classic 'hot laptop in a backpack' from maintenance tasks waking a sleeping machine."),
+            E("Laptop","📴",false,"Lap_StandbyNetwork",
+                "No Network in Modern Standby",
+                "Disconnects Wi-Fi while asleep on battery (Modern Standby laptops)",
+                "powercfg: Networking connectivity in Standby = Disable on battery\nModern Standby (S0) laptops otherwise stay online while 'asleep' to sync mail and updates — a major overnight drain. Not supported on S3-sleep machines (reported as not supported)."),
+            E("Laptop","🎬",false,"Lap_VideoBattery",
+                "Video Playback: Optimise for Battery",
+                "Uses power-saving video processing when watching on battery",
+                "powercfg: Multimedia → When playing video = Optimize power savings, Video playback quality bias = Power-saving on battery"),
+            E("Laptop","💾",false,"Lap_CritHibernate",
+                "Hibernate on Critical Battery",
+                "Saves your session to disk instead of dying at 0%",
+                "powercfg: Critical battery action (BATACTIONCRIT) = Hibernate on battery\nRequires hibernation — conflicts with Performance → Disable Hibernation, and will refuse (not silently re-enable) if hibernation is off."),
+            E("Laptop","🔍",false,"Lap_IndexOnBattery",
+                "Pause Search Indexing on Battery",
+                "Search indexer waits until you're plugged in",
+                "Sets PreventIndexOnBattery = 1 in HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search\nKeeps Windows Search working (unlike disabling the service) but stops the disk + CPU churn of indexing while unplugged."),
+            E("Laptop","🚫",false,"Lap_BackgroundApps",
+                "Block Background Store Apps",
+                "Stops Store/UWP apps running in the background (all power states)",
+                "Sets LetAppsRunInBackground = 2 (Force Deny) in AppPrivacy policy\nApplies on AC too. Apps like Mail, Phone Link or Teams (Store version) won't get live notifications until opened. Desktop apps are unaffected."),
+            E("Laptop","🌐",false,"Lap_EdgeBackground",
+                "Stop Edge Running in Background",
+                "Disables Edge Startup Boost and keep-running-after-close",
+                "Sets StartupBoostEnabled = 0, BackgroundModeEnabled = 0 in HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\nEdge otherwise preloads at sign-in and keeps processes alive after you close it, even if you never use it. Applies on AC too."),
+            E("Laptop","🪟",false,"Lap_Transparency",
+                "Disable Transparency Effects",
+                "Turns off Mica/acrylic blur — less GPU work on every frame",
+                "Sets EnableTransparency = 0 in HKCU\\...\\Themes\\Personalize\nSame as Settings → Personalization → Colors → Transparency effects → Off. Applies on AC too."),
         };
+
+        // Single display/run order for categories — used by the grid, the run loop and the CLI
+        public static readonly string[] CategoryOrder =
+        {
+            "Performance", "Privacy", "Responsiveness",
+            "Gaming", "Network", "Bloatware", "Security", "Advanced", "Laptop"
+        };
+
+        public static int OrderOf(string cat) => Array.IndexOf(CategoryOrder, cat);
 
         public static IEnumerable<TweakEntry> ForCategory(string cat) =>
             cat == "All" ? All : All.Where(t => t.Category == cat);
     }
-
 }

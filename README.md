@@ -3,7 +3,7 @@
 > A clean, open-source Windows 10/11 optimizer built in C# / WinForms.  
 > Drop it on a fresh Windows install, run it once as Administrator, and apply exactly the tweaks you want — with full per-tweak undo support.
 
-**Version:** `1.4.2`  
+**Version:** `1.5.1`  
 **Platform:** Windows 10 / 11 (64-bit)  
 **Runtime:** Self-contained — no .NET install required  
 **License:** MIT
@@ -67,10 +67,10 @@ One-click presets to quickly select tweaks for common configurations:
 | 🔒 Privacy | Recommended + all Privacy tweaks |
 | 🛡 Security | Recommended + all Security tweaks |
 | 🪶 Minimal | Conservative subset of safe tweaks |
-| 💻 Laptop | Privacy & responsiveness tweaks, excludes power/battery changes |
+| 💻 Laptop | Recommended + Privacy/Responsiveness/Security + the Laptop battery section, excludes tweaks that cost battery |
 | 🧹 Clean Install | Bloatware + Privacy + security baseline |
 | 🔬 Dev Machine | Performance + Network + advanced CPU tweaks |
-| ☢ Nuclear | Everything except Bloatware & Advanced |
+| ☢ Nuclear | Everything except Bloatware, Advanced & Laptop |
 
 ---
 
@@ -89,7 +89,8 @@ One-click presets to quickly select tweaks for common configurations:
 | Disable 8.3 Filenames | Removes legacy short filename generation on NTFS |
 | Disable Hibernation | Frees several GB of disk space, speeds shutdown |
 | Disable Memory Compression | Reduces CPU overhead; also disables page combining |
-| Set Timer Resolution to 0.5ms | Calls `timeBeginPeriod(1)` for sub-ms scheduler ticks |
+| Global 1ms Timer Resolution | Lets 1ms timer requests apply system-wide again (Win11 22H2+) |
+| Disable Widgets Board | Removes Widgets and its background WebView processes |
 
 ### 🔒 Privacy & Telemetry
 | Tweak | What It Does |
@@ -112,6 +113,8 @@ One-click presets to quickly select tweaks for common configurations:
 | Disable Windows Copilot | Blocks Copilot from launching system-wide via policy |
 | Disable Cloud Content & Delivery Manager | Kills Spotlight lock screen ads, silent app installs, OEM app promotions, and Start suggestions |
 | Block Telemetry Hosts | Adds 35 Microsoft telemetry domains to the hosts file (`0.0.0.0`) |
+| Disable Tailored Experiences | Stops diagnostic data being used for personalised tips & ads |
+| Disable Inking & Typing Data Collection | Stops Windows harvesting typed/inked text for a personal dictionary |
 
 ### 🖥 Responsiveness
 | Tweak | What It Does |
@@ -122,7 +125,9 @@ One-click presets to quickly select tweaks for common configurations:
 | Auto End Tasks on Shutdown | Automatically kills hung apps instead of prompting |
 | Platform Tick (High-Res Timer) | Forces constant-rate platform tick + disables HPET override |
 | Disable Windows Tips | Stops "Did you know..." popups and suggestions |
-| Disable Suggested Content | Removes app install suggestions from the Start menu |
+| Disable Suggested Content | Removes suggestions from Start and the Settings app |
+| Classic Right-Click Menu | Restores the full Windows 10 context menu — no more "Show more options" |
+| Add 'End Task' to Taskbar | Right-click a taskbar app → End task (Win11 23H2+) |
 | Verbose Boot/Shutdown Status | Shows real service names during boot/shutdown instead of a spinner |
 
 ### 🎮 Gaming
@@ -136,6 +141,7 @@ One-click presets to quickly select tweaks for common configurations:
 | Disable Fullscreen Optimisations | Forces exclusive fullscreen for lower input latency |
 | GPU Power: Prefer Maximum Performance | Sets D3D power policy to never downclock the GPU |
 | Disable NVIDIA Telemetry Services | Stops NvTelemetryContainer & NvDisplayContainerLS |
+| Disable Sticky / Filter Keys Hotkeys | Stops the 5×Shift popup interrupting games |
 
 ### 🌐 Network
 | Tweak | What It Does |
@@ -148,6 +154,7 @@ One-click presets to quickly select tweaks for common configurations:
 | Disable Large Send Offload (LSO) | Disables LSO v2 on all physical adapters — reduces NIC-driver jitter |
 | Reduce TCP TIME_WAIT Delay | Cuts TIME_WAIT hold from 240s to 30s — frees ports faster |
 | DNS over HTTPS (Cloudflare 1.1.1.1) | Enables DoH via Windows DNS Client, routes queries encrypted |
+| Disable Delivery Optimization P2P | Stops Windows seeding updates to other PCs over your connection |
 
 ### 🗑 Bloatware Removal
 Removes pre-installed Microsoft and third-party UWP packages from both user and provisioned scopes, including: Bing News & Weather, Zune Music/Video, Solitaire Collection, Windows Maps, Phone Link, Clipchamp, Xbox apps & overlays, third-party ad tiles (LinkedIn, Disney, Spotify, TikTok, Instagram), Office Hub & OneNote, 3D Viewer & Print 3D.
@@ -174,11 +181,33 @@ Lower-level tweaks for power users. Off by default.
 | Ensure SSD TRIM Enabled | Sets `disabledeletenotify = 0` — keeps SSD write speeds consistent |
 | Aggressive Animation Disabling | Kills `UserPreferencesMask`, TaskbarAnim, MinAnimate bits |
 | Disable CPU Core Parking | Forces all cores active via `CPMINCORES = 100` — prevents park-induced stutter |
-| Enable MSI Mode (GPU) | Switches GPU to Message Signaled Interrupts — reduces DPC latency |
-| IRQ Affinity — Spread GPU Interrupts | Spreads MSI-X GPU interrupts across all P-cores |
+| Enable MSI Mode (GPU) | Switches every GPU to Message Signaled Interrupts — reduces DPC latency |
+| IRQ Affinity — Spread GPU Interrupts | Spreads MSI-X GPU interrupts across all processors |
 | TSC Sync Policy: Legacy | Reduces scheduling micro-jitter on multi-core systems |
 | Enable x2APIC Mode | Improves interrupt delivery on many-core CPUs (HEDT, Ryzen) |
 | Unhide Processor Boost Mode | Reveals the hidden "Processor performance boost mode" dropdown in Advanced Power Settings — doesn't force a value, just lets you choose one yourself |
+
+### 💻 Laptop (Battery Life)
+Battery-focused tweaks. Off by default — use the **💻 Laptop** preset or pick them individually. Power-plan tweaks only change the **on battery** side of the active plan, so plugged-in performance is untouched, and every value is backed up for Undo.
+
+| Tweak | What It Does |
+|-------|-------------|
+| Energy Saver at 30% | Energy Saver kicks in at 30% (not 20%) and dims the screen harder |
+| Disable Turbo Boost on Battery | No CPU boost clocks when unplugged — typically 15–30% more battery on light work |
+| CPU Energy Preference: Efficiency | EPP = 80% on battery (incl. E-cores on hybrid CPUs) |
+| Shorter Screen & Sleep Timeouts | Screen off after 3 min, sleep after 10 min on battery (never lengthens yours) |
+| Adaptive Brightness on Battery | Ambient light sensor can dim the screen when unplugged |
+| PCIe Link Power: Maximum Savings | ASPM lets NVMe / Wi-Fi / dGPU links idle in low-power states |
+| Wi-Fi Maximum Power Saving | Deepest wireless power-save mode on battery |
+| USB Selective Suspend on Battery | Idle USB devices power down (re-enables it if a gaming tweak pack turned it off) |
+| Disable Wake Timers on Battery | Stops scheduled tasks waking the laptop in your bag |
+| No Network in Modern Standby | Disconnects Wi-Fi while asleep on battery (Modern Standby laptops) |
+| Video Playback: Optimise for Battery | Power-saving video processing when unplugged |
+| Hibernate on Critical Battery | Saves your session instead of dying at 0% (needs hibernation on) |
+| Pause Search Indexing on Battery | Indexer waits until you're plugged in — search still works |
+| Block Background Store Apps | Store apps can't run in the background (applies on AC too) |
+| Stop Edge Running in Background | Disables Edge Startup Boost + keep-running-after-close |
+| Disable Transparency Effects | Turns off Mica/acrylic blur to cut GPU work |
 
 ---
 

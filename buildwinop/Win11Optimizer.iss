@@ -15,7 +15,7 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "Win11 Optimizer"
-#define MyAppVersion "1.4.2"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "Corn Systems"
 #define MyAppURL "https://github.com/Corn-Systems/win11op"
 #define MyAppExeName "Win11Optimizer.exe"

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 
 namespace Win11Optimizer
@@ -22,8 +21,9 @@ namespace Win11Optimizer
         [DllImport("kernel32.dll")] private static extern bool AttachConsole(int pid);
         [DllImport("kernel32.dll")] private static extern bool AllocConsole();
         private const int ATTACH_PARENT_PROCESS = -1;
+        private static readonly string[] HelpFlags = { "--help", "-h", "/?" };
 
-        private static StreamWriter _logFile;
+        private static StreamWriter _log;
         private static bool _silent;
 
         // Returns true when the process ran in CLI mode (caller should exit),
@@ -31,11 +31,7 @@ namespace Win11Optimizer
         public static bool TryRun(string[] args, out int exitCode)
         {
             exitCode = 0;
-            if (args == null || args.Length == 0) return false;
-
-            bool wantsCli = args.Any(a =>
-                a is "--apply" or "--list-tweaks" or "--help" or "-h" or "/?" );
-            if (!wantsCli) return false;
+            if (args == null || !args.Any(a => a is "--apply" or "--list-tweaks" || HelpFlags.Contains(a))) return false;
 
             // WinExe has no console — attach to the parent cmd/powershell window
             // so output lands where the user typed the command.
@@ -45,162 +41,101 @@ namespace Win11Optimizer
             try
             {
                 AppPaths.EnsureDataDir();
-                _logFile = new StreamWriter(AppPaths.CliRunLog,
-                    append: true) { AutoFlush = true };
+                _log = new StreamWriter(AppPaths.CliRunLog, append: true) { AutoFlush = true };
             }
-            catch { /* log file is best-effort */ }
+            catch (Exception ex) { SessionLog.Write("CLI LOG", ex); }   // the log file is best-effort
 
             try
             {
-                if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
+                if (args.Any(HelpFlags.Contains)) PrintHelp();
+                else if (args.Contains("--list-tweaks")) ListTweaks();
+                else
                 {
-                    PrintHelp();
-                    return true;
+                    int i = Array.IndexOf(args, "--apply");
+                    string path = i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+                    if (string.IsNullOrWhiteSpace(path) || path.StartsWith("--"))
+                    {
+                        Log("ERROR: --apply requires a profile path.");
+                        PrintHelp();
+                        exitCode = 2;
+                    }
+                    else exitCode = ApplyProfile(path, skipRestorePoint: args.Contains("--no-restore-point"));
                 }
-
-                if (args.Contains("--list-tweaks"))
-                {
-                    ListTweaks();
-                    return true;
-                }
-
-                int idx = Array.IndexOf(args, "--apply");
-                string profilePath = idx >= 0 && idx + 1 < args.Length ? args[idx + 1] : null;
-                if (string.IsNullOrWhiteSpace(profilePath) || profilePath.StartsWith("--"))
-                {
-                    Log("ERROR: --apply requires a profile path.");
-                    PrintHelp();
-                    exitCode = 2;
-                    return true;
-                }
-
-                exitCode = ApplyProfile(profilePath, skipRestorePoint: args.Contains("--no-restore-point"));
                 return true;
             }
             finally
             {
-                try { _logFile?.Dispose(); } catch { }
+                try { _log?.Dispose(); } catch (Exception ex) { SessionLog.Write("CLI LOG", ex); }
+                _log = null;
             }
         }
 
-        private static int ApplyProfile(string profilePath, bool skipRestorePoint)
+        private static int ApplyProfile(string path, bool skipRestorePoint)
         {
-            if (!File.Exists(profilePath))
-            {
-                Log($"ERROR: profile not found: {profilePath}");
-                return 2;
-            }
+            if (!File.Exists(path)) { Log($"ERROR: profile not found: {path}"); return 2; }
 
             TweakProfile.Profile profile;
-            try
-            {
-                profile = JsonSerializer.Deserialize<TweakProfile.Profile>(
-                    File.ReadAllText(profilePath));
-            }
-            catch (Exception ex)
-            {
-                Log($"ERROR: could not parse profile: {ex.Message}");
-                return 2;
-            }
+            try { profile = JsonSerializer.Deserialize<TweakProfile.Profile>(File.ReadAllText(path)); }
+            catch (Exception ex) { Log($"ERROR: could not parse profile: {ex.Message}"); return 2; }
+            if (profile?.TweakKeys == null || profile.TweakKeys.Count == 0) { Log("ERROR: profile is empty or invalid."); return 2; }
 
-            if (profile?.TweakKeys == null || profile.TweakKeys.Count == 0)
-            {
-                Log("ERROR: profile is empty or invalid.");
-                return 2;
-            }
+            var keys = new HashSet<string>(profile.TweakKeys, StringComparer.OrdinalIgnoreCase);
+            var todo = TweakCatalog.All.Where(t => keys.Contains(t.TweakKey))
+                                       .OrderBy(t => TweakCatalog.OrderOf(t.Category)).ToList();
 
-            var keySet  = new HashSet<string>(profile.TweakKeys, StringComparer.OrdinalIgnoreCase);
-            var matched = TweakCatalog.All.Where(t => keySet.Contains(t.TweakKey)).ToList();
-
-            try
-            {
-                using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
-                if (!new System.Security.Principal.WindowsPrincipal(id)
-                        .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
-                    Log("WARNING: not running as Administrator — most tweaks will fail. " +
-                        "Re-run from an elevated prompt.");
-            }
-            catch (Exception ex) { Log($"WARNING: could not determine admin status: {ex.Message}"); }
+            if (!Program.IsAdmin())
+                Log("WARNING: not running as Administrator — most tweaks will fail. Re-run from an elevated prompt.");
 
             Log($"══ Win11 Optimizer v{AppVersion.Current} — CLI apply ══");
-            Log($"Profile:  \"{profile.Name}\" ({profilePath})");
-            Log($"Matched:  {matched.Count} of {profile.TweakKeys.Count} tweaks in this version");
-            if (matched.Count == 0) { Log("Nothing to do."); return 2; }
+            Log($"Profile:  \"{profile.Name}\" ({path})");
+            Log($"Matched:  {todo.Count} of {profile.TweakKeys.Count} tweaks in this version");
+            if (todo.Count == 0) { Log("Nothing to do."); return 2; }
 
-            bool rpCreated = false;
+            bool rp = false;
             if (!skipRestorePoint)
             {
                 Log("Creating System Restore Point…");
-                rpCreated = TweakEngine.CreateRestorePoint("Win11Optimizer — CLI apply");
-                Log(rpCreated ? "Restore Point created." : "Restore Point failed or skipped.");
+                rp = TweakEngine.CreateRestorePoint("Win11Optimizer — CLI apply");
+                Log(rp ? "Restore Point created." : "Restore Point failed or skipped.");
             }
 
             TweakEngine.ClearResults();
-
-            var ordered = matched
-                .OrderBy(t => Array.IndexOf(new[] {
-                    "Performance","Privacy","Responsiveness",
-                    "Gaming","Network","Bloatware","Security","Advanced"
-                }, t.Category))
-                .ToList();
-
-            int prevCount = 0;
-            var catNames  = new List<string>();
-            var details   = new List<string>();
-
-            foreach (var entry in ordered)
+            var all = new List<TweakEngine.TweakResult>();
+            foreach (var entry in todo)
             {
-                if (!catNames.Contains(entry.Category)) catNames.Add(entry.Category);
                 Log($"→ [{entry.Category}] {entry.Name}");
-
-                if (entry.Category == "Bloatware")
-                    TweakEngine.ApplyBloatwareTweak(entry.TweakKey);
-                else if (entry.IsAdvanced && entry.AdvancedKey != null)
-                    TweakEngine.ApplyAdvancedTweak(entry.AdvancedKey);
-                else
-                    TweakEngine.ApplyTweak(entry.TweakKey);
-
-                var results = TweakEngine.GetResults();
-                foreach (var r in results.Skip(prevCount))
+                foreach (var r in TweakEngine.Apply(entry))
                 {
                     Log(r.Success ? $"   ✔ {r.Name}" : $"   ✘ {r.Name}: {r.Error}");
-                    details.Add((r.Success ? "✔ " : "✘ ") + r.Name);
+                    all.Add(r);
                 }
-                prevCount = results.Count;
             }
 
-            var all  = TweakEngine.GetResults();
-            int pass = all.Count(r => r.Success);
-            int fail = all.Count(r => !r.Success);
-
-            AppliedState.MarkApplied(ordered.Select(t => t.TweakKey));
+            int fail = all.Count(r => !r.Success), pass = all.Count - fail;
+            AppliedState.MarkApplied(todo.Select(t => t.TweakKey));
             ChangeLog.AddEntry(new ChangeLog.RunEntry
             {
-                Categories   = string.Join(", ", catNames) + " (CLI)",
+                Categories   = string.Join(", ", todo.Select(t => t.Category).Distinct()) + " (CLI)",
                 Passed       = pass,
                 Failed       = fail,
-                RestorePoint = rpCreated,
-                Details      = details
+                RestorePoint = rp,
+                Details      = all.Select(r => r.Line).ToList()
             });
 
-            var (rebootList, explorerList) = RebootInfo.Split(ordered);
+            var (reboot, explorer) = RebootInfo.Split(todo);
             Log($"══ COMPLETE: {pass} succeeded, {fail} failed ══");
-            if (rebootList.Count > 0)
-                Log($"Reboot required for: {string.Join(", ", rebootList)}");
-            else if (explorerList.Count > 0)
-                Log($"Explorer restart recommended for: {string.Join(", ", explorerList)}");
-
+            if (reboot.Count > 0)        Log($"Reboot required for: {string.Join(", ", reboot)}");
+            else if (explorer.Count > 0) Log($"Explorer restart recommended for: {string.Join(", ", explorer)}");
             return fail == 0 ? 0 : 1;
         }
 
         private static void ListTweaks()
         {
             Log($"Win11 Optimizer v{AppVersion.Current} — available tweak keys:\n");
-            foreach (var group in TweakCatalog.All.GroupBy(t => t.Category))
+            foreach (var g in TweakCatalog.All.GroupBy(t => t.Category).OrderBy(g => TweakCatalog.OrderOf(g.Key)))
             {
-                Log($"[{group.Key}]");
-                foreach (var t in group)
-                    Log($"  {t.TweakKey,-28} {t.Name}");
+                Log($"[{g.Key}]");
+                foreach (var t in g) Log($"  {t.TweakKey,-28} {t.Name}");
                 Log("");
             }
         }
@@ -230,13 +165,11 @@ Exit codes: 0 = all succeeded, 1 = some tweaks failed, 2 = bad usage or input.
 Run from an elevated prompt — tweaks need Administrator.");
         }
 
+        // The logger itself — a failed console/file write has nowhere else to go.
         private static void Log(string msg)
         {
-            if (!_silent)
-            {
-                try { Console.WriteLine(msg); } catch { }
-            }
-            try { _logFile?.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}"); } catch { }
+            if (!_silent) try { Console.WriteLine(msg); } catch { }
+            try { _log?.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}"); } catch { }
         }
     }
 }

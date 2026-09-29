@@ -1,63 +1,33 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Drawing;
-using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using CornSystems;   // shared Dpi helper — byte-identical across Corn Systems repos
 
 namespace Win11Optimizer
 {
+    // Tweak keys applied by this app or detected on the system. The detection scan marks
+    // keys from a worker thread while the UI reads and writes them, so every access locks.
     public static class AppliedState
     {
-        private static readonly string StateFile = AppPaths.AppliedStateFile;
-
+        private static readonly object _lock = new();
         private static HashSet<string> _applied = new(StringComparer.OrdinalIgnoreCase);
 
         public static void Load()
         {
-            try
+            var list = AppPaths.LoadJson<List<string>>(AppPaths.AppliedStateFile, "APPLIEDSTATE");
+            if (list != null) lock (_lock) _applied = new(list, StringComparer.OrdinalIgnoreCase);
+        }
+
+        public static bool IsApplied(string tweakKey) { lock (_lock) return _applied.Contains(tweakKey); }
+        public static void MarkApplied(IEnumerable<string> tweakKeys) => Update(tweakKeys, true);
+        public static void MarkUndone(IEnumerable<string> tweakKeys)  => Update(tweakKeys, false);
+
+        private static void Update(IEnumerable<string> keys, bool add)
+        {
+            lock (_lock)
             {
-                if (!File.Exists(StateFile)) return;
-                var list = System.Text.Json.JsonSerializer.Deserialize<List<string>>(
-                    File.ReadAllText(StateFile));
-                if (list != null) _applied = new HashSet<string>(list, StringComparer.OrdinalIgnoreCase);
+                foreach (var k in keys) if (add) _applied.Add(k); else _applied.Remove(k);
+                AppPaths.SaveJson(AppPaths.AppliedStateFile, _applied.ToList(), "APPLIEDSTATE");
             }
-            catch (Exception ex) { SessionLog.Write("APPLIEDSTATE LOAD", ex); }
-        }
-
-        public static bool IsApplied(string tweakKey) => _applied.Contains(tweakKey);
-
-        public static void MarkApplied(IEnumerable<string> tweakKeys)
-        {
-            foreach (var k in tweakKeys) _applied.Add(k);
-            Save();
-        }
-
-        public static void MarkUndone(IEnumerable<string> tweakKeys)
-        {
-            foreach (var k in tweakKeys) _applied.Remove(k);
-            Save();
-        }
-
-        private static void Save()
-        {
-            try
-            {
-                AppPaths.EnsureDataDir();
-                File.WriteAllText(StateFile,
-                    System.Text.Json.JsonSerializer.Serialize(_applied.ToList(),
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-            }
-            catch (Exception ex) { SessionLog.Write("APPLIEDSTATE SAVE", ex); }
         }
     }
-
 }

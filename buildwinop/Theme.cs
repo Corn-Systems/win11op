@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Drawing;
 
 namespace Win11Optimizer
@@ -30,5 +31,14 @@ namespace Win11Optimizer
         public static readonly Color BORDER2     = Color.FromArgb( 61,  58, 112);  // --border2: #3d3a70
 
         public static readonly Color ACCENT_TEXT = Color.FromArgb(  8,   8,  18);  // dark text on gold buttons
+
+        // Shared font cache. Controls never dispose their Font, so every label/tile/row that did
+        // `new Font(...)` leaked a GDI+ font per rebuild — one instance per (family, size, style)
+        // instead. Never wrap one of these in `using`.
+        private static readonly ConcurrentDictionary<(string, float, FontStyle), Font> _fonts = new();
+        public static Font F(string family, float size, FontStyle style = FontStyle.Regular) =>
+            _fonts.GetOrAdd((family, size, style), k => new Font(k.Item1, k.Item2, k.Item3));
+        public static Font Mono(float size, bool bold = false) => F("Courier New", size, bold ? FontStyle.Bold : FontStyle.Regular);
+        public static Font Ui(float size, bool bold = false)   => F("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
     }
 }

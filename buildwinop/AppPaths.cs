@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 
 namespace Win11Optimizer
 {
@@ -13,47 +15,52 @@ namespace Win11Optimizer
     // stray .json/.log files.
     public static class AppPaths
     {
-        public const string DataFolderName = "Data";
-
         public static string BaseDir => AppDomain.CurrentDomain.BaseDirectory;
+        public static string DataDir => Path.Combine(BaseDir, "Data");
 
-        public static string DataDir => Path.Combine(BaseDir, DataFolderName);
+        public static string ChangeLogFile      => Data("changelog.json");
+        public static string TweaksBackupFile   => Data("tweaks_backup.json");
+        public static string AppliedStateFile   => Data("applied_tweaks.json");
+        public static string ServicesBackupFile => Data("services_backup.json");
+        public static string CrashLog           => Data("crash.log");
+        public static string CliRunLog          => Data("cli_run.log");
+        public static string LastVersionFile    => Data("last_version.txt");
 
-        public static string ChangeLogFile      => Path.Combine(DataDir, "changelog.json");
-        public static string TweaksBackupFile   => Path.Combine(DataDir, "tweaks_backup.json");
-        public static string AppliedStateFile   => Path.Combine(DataDir, "applied_tweaks.json");
-        public static string ServicesBackupFile => Path.Combine(DataDir, "services_backup.json");
-        public static string CrashLog           => Path.Combine(DataDir, "crash.log");
-        public static string CliRunLog          => Path.Combine(DataDir, "cli_run.log");
-        public static string LastVersionFile    => Path.Combine(DataDir, "last_version.txt");
+        private static string Data(string name) => Path.Combine(DataDir, name);
+
+        internal static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
         // One-time move of any files a pre-1.4.2 build dropped loose next to the exe
-        // (changelog.json, tweaks_backup.json, applied_tweaks.json, crash.log) into
-        // the new Data\ subfolder, so upgrading in place doesn't reset anyone's
-        // tweak history or Undo state.
+        // into the Data\ subfolder, so upgrading in place doesn't reset anyone's
+        // tweak history or Undo state. Also creates Data\.
         public static void MigrateLegacyFiles()
         {
-            try
+            EnsureDataDir();
+            foreach (var name in new[] { ChangeLogFile, TweaksBackupFile, AppliedStateFile, CrashLog, CliRunLog, LastVersionFile }.Select(Path.GetFileName))
             {
-                EnsureDataDir();
-                foreach (var name in new[] { "changelog.json", "tweaks_backup.json", "applied_tweaks.json", "crash.log", "cli_run.log", "last_version.txt" })
-                {
-                    string oldPath = Path.Combine(BaseDir, name);
-                    string newPath = Path.Combine(DataDir, name);
-                    if (File.Exists(oldPath) && !File.Exists(newPath))
-                    {
-                        try { File.Move(oldPath, newPath); }
-                        catch { /* locked or cross-volume — leave the old copy, not fatal */ }
-                    }
-                }
+                string from = Path.Combine(BaseDir, name), to = Data(name);
+                try { if (File.Exists(from) && !File.Exists(to)) File.Move(from, to); }
+                catch (Exception ex) { SessionLog.Write("MIGRATE " + name, ex); }   // locked or cross-volume — leave the old copy
             }
-            catch { /* best-effort; callers still work if this fails */ }
         }
 
         public static void EnsureDataDir()
         {
             try { Directory.CreateDirectory(DataDir); }
-            catch { /* best effort — callers already wrap their own file I/O in try/catch */ }
+            catch (Exception ex) { SessionLog.Write("DATA DIR", ex); }   // callers wrap their own file I/O too
+        }
+
+        // JSON state files under Data\. Load returns null when the file is missing or unreadable.
+        public static T LoadJson<T>(string path, string tag) where T : class
+        {
+            try { return File.Exists(path) ? JsonSerializer.Deserialize<T>(File.ReadAllText(path)) : null; }
+            catch (Exception ex) { SessionLog.Write(tag + " LOAD", ex); return null; }
+        }
+
+        public static void SaveJson<T>(string path, T value, string tag)
+        {
+            try { EnsureDataDir(); File.WriteAllText(path, JsonSerializer.Serialize(value, Indented)); }
+            catch (Exception ex) { SessionLog.Write(tag + " SAVE", ex); }
         }
     }
 }
