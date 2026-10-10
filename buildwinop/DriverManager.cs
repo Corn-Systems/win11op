@@ -6,24 +6,24 @@ using System.Text.RegularExpressions;
 
 namespace Win11Optimizer
 {
-    public class DriverPackage
+    public class driverPackage
     {
-        public string    PublishedName { get; set; } = "";   // oem12.inf
-        public string    OriginalName  { get; set; } = "";   // nvhda.inf
-        public string    ProviderName  { get; set; } = "";
-        public string    ClassName     { get; set; } = "";
-        public string    Version       { get; set; } = "";
-        public DateTime? DriverDate    { get; set; }
-        public bool      InUse         { get; set; }
-        public long      SizeBytes     { get; set; }
+        public string    publishedName { get; set; } = "";   // oem12.inf
+        public string    originalName  { get; set; } = "";   // nvhda.inf
+        public string    providerName  { get; set; } = "";
+        public string    className     { get; set; } = "";
+        public string    version       { get; set; } = "";
+        public DateTime? driverDate    { get; set; }
+        public bool      inUse         { get; set; }
+        public long      sizeBytes     { get; set; }
 
-        public string SizeLabel => SizeFormat.Bytes(SizeBytes);
-        public string DateLabel => DriverDate?.ToString("yyyy-MM-dd") ?? "Unknown";
+        public string sizeLabel => sizeFormat.bytes(sizeBytes);
+        public string dateLabel => driverDate?.ToString("yyyy-MM-dd") ?? "Unknown";
     }
 
-    public static class SizeFormat
+    public static class sizeFormat
     {
-        public static string Bytes(long bytes)
+        public static string bytes(long bytes)
         {
             double b = bytes;
             string[] units = { "B", "KB", "MB", "GB" };
@@ -33,23 +33,23 @@ namespace Win11Optimizer
         }
     }
 
-    public static class DriverManager
+    public static class driverManager
     {
-        private static string DriverStore =>
+        private static string driverStore =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\DriverStore\FileRepository");
 
-        public static List<DriverPackage> LoadAll()
+        public static List<driverPackage> loadAll()
         {
-            var pkgs  = Parse(Capture(() => Proc.Run("pnputil.exe", "/enum-drivers")));
-            var inUse = InUseInfNames();
+            var pkgs  = parse(capture(() => proc.run("pnputil.exe", "/enum-drivers")));
+            var inUse = inUseInfNames();
             foreach (var p in pkgs)
             {
                 // If the in-use lookup failed, lock everything — an empty set used to mark
                 // every package (including live device drivers) as safe to remove.
-                p.InUse     = inUse == null || inUse.Contains(p.PublishedName);
-                p.SizeBytes = FolderSize(p.OriginalName);
+                p.inUse     = inUse == null || inUse.Contains(p.publishedName);
+                p.sizeBytes = folderSize(p.originalName);
             }
-            return pkgs.OrderByDescending(p => p.SizeBytes).ToList();
+            return pkgs.OrderByDescending(p => p.sizeBytes).ToList();
         }
 
         // pnputil /enum-drivers prints blocks like:
@@ -60,73 +60,73 @@ namespace Win11Optimizer
         //   Class GUID:         {...}
         //   Driver Version:     10/02/2025 32.0.15.7652
         //   Signer Name:        ...
-        private static List<DriverPackage> Parse(string output) =>
+        private static List<driverPackage> parse(string output) =>
             Regex.Split(output, @"(?=Published Name\s*:)")
-                .Select(block => (block, pub: Field(block, "Published Name")))
+                .Select(block => (block, pub: fieldValue(block, "Published Name")))
                 .Where(x => x.pub.Length > 0)
                 .Select(x =>
                 {
-                    string ver = Field(x.block, "Driver Version");
+                    string ver = fieldValue(x.block, "Driver Version");
                     var parts  = ver.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     DateTime? date = parts.Length == 2 && DateTime.TryParse(parts[0], out var d) ? d : null;
-                    return new DriverPackage
+                    return new driverPackage
                     {
-                        PublishedName = x.pub,
-                        OriginalName  = Field(x.block, "Original Name"),
-                        ProviderName  = OrUnknown(Field(x.block, "Provider Name")),
-                        ClassName     = OrUnknown(Field(x.block, "Class Name")),
-                        Version       = OrUnknown(date == null ? ver : parts[1]),
-                        DriverDate    = date
+                        publishedName = x.pub,
+                        originalName  = fieldValue(x.block, "Original Name"),
+                        providerName  = orUnknown(fieldValue(x.block, "Provider Name")),
+                        className     = orUnknown(fieldValue(x.block, "Class Name")),
+                        version       = orUnknown(date == null ? ver : parts[1]),
+                        driverDate    = date
                     };
                 }).ToList();
 
-        private static string Field(string block, string label)
+        private static string fieldValue(string block, string label)
         {
             var m = Regex.Match(block, Regex.Escape(label) + @"\s*:\s*(.+)");
             return m.Success ? m.Groups[1].Value.Trim() : "";
         }
 
-        private static string OrUnknown(string s) => string.IsNullOrWhiteSpace(s) ? "Unknown" : s;
+        private static string orUnknown(string s) => string.IsNullOrWhiteSpace(s) ? "Unknown" : s;
 
         // Drivers actually bound to a device right now, so a currently-in-use package never
         // gets flagged as removable. Null when the lookup fails or comes back empty.
-        private static HashSet<string> InUseInfNames()
+        private static HashSet<string> inUseInfNames()
         {
-            var set = Capture(() => Proc.PowerShell("Get-CimInstance Win32_PnPSignedDriver | Select-Object -ExpandProperty InfName"))
+            var set = capture(() => proc.powerShell("Get-CimInstance Win32_PnPSignedDriver | Select-Object -ExpandProperty InfName"))
                 .Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (set.Count > 0) return set;
-            SessionLog.Write("DRIVER: in-use driver lookup returned nothing — treating every package as in use");
+            sessionLog.write("DRIVER: in-use driver lookup returned nothing — treating every package as in use");
             return null;
         }
 
-        private static long FolderSize(string originalName)
+        private static long folderSize(string originalName)
         {
-            if (string.IsNullOrWhiteSpace(originalName) || !Directory.Exists(DriverStore)) return 0;
+            if (string.IsNullOrWhiteSpace(originalName) || !Directory.Exists(driverStore)) return 0;
             try
             {
                 // FileRepository folders look like "nvhda.inf_amd64_8f3a2c1..."
-                string match = Directory.GetDirectories(DriverStore, Path.GetFileNameWithoutExtension(originalName) + ".inf_*").FirstOrDefault();
-                return match == null ? 0 : DiskCleanupManager.DirSize(match);
+                string match = Directory.GetDirectories(driverStore, Path.GetFileNameWithoutExtension(originalName) + ".inf_*").FirstOrDefault();
+                return match == null ? 0 : diskCleanupManager.dirSize(match);
             }
-            catch (Exception ex) { SessionLog.Write("DRIVER SIZE", ex); return 0; }
+            catch (Exception ex) { sessionLog.write("DRIVER SIZE", ex); return 0; }
         }
 
-        public static bool Delete(DriverPackage pkg, out string error)
+        public static bool delete(driverPackage pkg, out string error)
         {
             try
             {
-                var (code, stdOut, stdErr) = Proc.Run("pnputil.exe", $"/delete-driver {pkg.PublishedName} /uninstall /force");
+                var (code, stdOut, stdErr) = proc.run("pnputil.exe", $"/delete-driver {pkg.publishedName} /uninstall /force");
                 error = code == 0 ? null : (string.IsNullOrWhiteSpace(stdErr) ? stdOut : stdErr).Trim();
                 return code == 0;
             }
             catch (Exception ex) { error = ex.Message; return false; }
         }
 
-        private static string Capture(Func<(int Code, string Out, string Err)> run)
+        private static string capture(Func<(int code, string output, string error)> run)
         {
-            try { return run().Out ?? ""; }
-            catch (Exception ex) { SessionLog.Write("DRIVER", ex); return ""; }
+            try { return run().output ?? ""; }
+            catch (Exception ex) { sessionLog.write("DRIVER", ex); return ""; }
         }
     }
 }

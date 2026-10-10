@@ -6,209 +6,209 @@ using System.Windows.Forms;
 
 namespace Win11Optimizer
 {
-    public class StartupTab : ListTab
+    public class startupTab : listTab
     {
-        private List<StartupEntry> _entries = new();
-        private readonly List<StartupEntryRow> _rows = new();
+        private List<startupEntry> _entries = new();
+        private readonly List<startupEntryRow> _rows = new();
 
-        public StartupTab() : base("STARTUP MANAGER", 240)
+        public startupTab() : base("STARTUP MANAGER", 240)
         {
-            AlignRight((Ghost("✘ Disable All", 100, (s, e) => SetAll(false), Theme.DANGER,  Theme.Mono(7.5f)), 6),
-                       (Ghost("✔ Enable All",  96,  (s, e) => SetAll(true),  Theme.SUCCESS, Theme.Mono(7.5f)), 6),
-                       (Ghost("↺ Refresh",     84,  (s, e) => LoadEntries()), 0));
+            alignRight((ghost("✘ Disable All", 100, (s, e) => setAll(false), theme.danger,  theme.mono(7.5f)), 6),
+                       (ghost("✔ Enable All",  96,  (s, e) => setAll(true),  theme.success, theme.mono(7.5f)), 6),
+                       (ghost("↺ Refresh",     84,  (s, e) => loadEntries()), 0));
         }
 
         // Reloads on every visit — entries change outside the app
-        public override void Activate() => LoadEntries();
+        public override void activate() => loadEntries();
 
-        private void LoadEntries()
+        private void loadEntries()
         {
-            UiHelpers.ClearAndDispose(Inner);
+            uiHelpers.clearAndDispose(inner);
             _rows.Clear();
-            _entries = StartupManager.LoadAll();
+            _entries = startupManager.loadAll();
 
             if (_entries.Count == 0)
             {
-                Inner.Controls.Add(UiHelpers.Lbl("No startup entries found.", Theme.Mono(9f), Theme.TEXT_DIM, 0, 20));
-                Summary.Text = "No entries found";
+                inner.Controls.Add(uiHelpers.lbl("No startup entries found.", theme.mono(9f), theme.textDim, 0, 20));
+                summary.Text = "No entries found";
                 return;
             }
 
             foreach (var (label, source) in new[]
             {
-                ("Registry (Current User)",  StartupSource.RegistryCurrentUser),
-                ("Registry (Local Machine)", StartupSource.RegistryLocalMachine),
-                ("Startup Folder",           StartupSource.StartupFolder),
+                ("Registry (Current User)",  startupSource.registryCurrentUser),
+                ("Registry (Local Machine)", startupSource.registryLocalMachine),
+                ("Startup Folder",           startupSource.startupFolder),
             })
             {
-                var batch = _entries.Where(e => e.Source == source).ToList();
+                var batch = _entries.Where(e => e.source == source).ToList();
                 if (batch.Count == 0) continue;
-                Inner.Controls.Add(GroupHeader(label));
+                inner.Controls.Add(groupHeader(label));
                 foreach (var entry in batch)
                 {
-                    var row = new StartupEntryRow(entry);
-                    row.ToggleRequested += OnToggle;
-                    row.DeleteRequested += OnDelete;
+                    var row = new startupEntryRow(entry);
+                    row.toggleRequested += onToggle;
+                    row.deleteRequested += onDelete;
                     _rows.Add(row);
-                    Inner.Controls.Add(row);
+                    inner.Controls.Add(row);
                 }
             }
 
-            FitInner();
-            Reflow();
-            UpdateCountLabel();
+            fitInner();
+            reflow();
+            updateCountLabel();
         }
 
-        private static Panel GroupHeader(string title)
+        private static Panel groupHeader(string title)
         {
             var hdr = new Panel { Height = 36, BackColor = Color.Transparent };
-            hdr.Controls.Add(UiHelpers.Lbl($"// {title.ToUpper()}", Theme.Mono(7.5f, true), Theme.ACCENT, 0, 10));
-            UiHelpers.BottomBorder(hdr);
+            hdr.Controls.Add(uiHelpers.lbl($"// {title.ToUpper()}", theme.mono(7.5f, true), theme.accent, 0, 10));
+            uiHelpers.bottomBorder(hdr);
             return hdr;
         }
 
-        protected override void Reflow()
+        protected override void reflow()
         {
-            if (Inner.Width >= 10) UiHelpers.ReflowRowsVertically(Inner, Inner.Controls.Cast<Control>().ToList(), 0);
+            if (inner.Width >= 10) uiHelpers.reflowRowsVertically(inner, inner.Controls.Cast<Control>().ToList(), 0);
         }
 
-        private void OnToggle(object sender, StartupEntry entry)
+        private void onToggle(object sender, startupEntry entry)
         {
-            if (entry.Source == StartupSource.StartupFolder)
+            if (entry.source == startupSource.startupFolder)
                 MessageBox.Show("Startup folder shortcuts can't be disabled — only deleted.\n\n" +
                                 "To prevent this item from launching, use the Delete button.",
                     "Can't Disable Folder Item", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            else if (!StartupManager.SetEnabled(entry, !entry.IsEnabled))
-                MessageBox.Show($"Could not {(entry.IsEnabled ? "disable" : "enable")} \"{entry.Name}\".\n" +
+            else if (!startupManager.setEnabled(entry, !entry.isEnabled))
+                MessageBox.Show($"Could not {(entry.isEnabled ? "disable" : "enable")} \"{entry.name}\".\n" +
                                 "Make sure the app is running as Administrator.",
                     "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
-            ((StartupEntryRow)sender).RefreshState();
-            UpdateCountLabel();
+            ((startupEntryRow)sender).refreshState();
+            updateCountLabel();
         }
 
-        private void OnDelete(object sender, StartupEntry entry)
+        private void onDelete(object sender, startupEntry entry)
         {
-            if (MessageBox.Show($"Remove \"{entry.Name}\" from startup?\n\nThis cannot be undone.", "Confirm Delete",
+            if (MessageBox.Show($"Remove \"{entry.name}\" from startup?\n\nThis cannot be undone.", "Confirm Delete",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
 
-            if (!StartupManager.Delete(entry))
+            if (!startupManager.delete(entry))
             {
-                MessageBox.Show($"Could not delete \"{entry.Name}\".\nMake sure the app is running as Administrator.",
+                MessageBox.Show($"Could not delete \"{entry.name}\".\nMake sure the app is running as Administrator.",
                     "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            var row = (StartupEntryRow)sender;
+            var row = (startupEntryRow)sender;
             _rows.Remove(row);
-            Inner.Controls.Remove(row);
+            inner.Controls.Remove(row);
             BeginInvoke(new Action(row.Dispose));   // we're inside the row's own button click — dispose once it returns
             _entries.Remove(entry);
-            Reflow();
-            UpdateCountLabel();
+            reflow();
+            updateCountLabel();
         }
 
-        private void SetAll(bool enable)
+        private void setAll(bool enable)
         {
             var failed = new List<string>();
-            foreach (var row in _rows.Where(r => r.Entry.Source != StartupSource.StartupFolder && r.Entry.IsEnabled != enable))
+            foreach (var row in _rows.Where(r => r.entry.source != startupSource.startupFolder && r.entry.isEnabled != enable))
             {
-                if (!StartupManager.SetEnabled(row.Entry, enable)) failed.Add(row.Entry.Name);
-                row.RefreshState();
+                if (!startupManager.setEnabled(row.entry, enable)) failed.Add(row.entry.name);
+                row.refreshState();
             }
-            UpdateCountLabel();
+            updateCountLabel();
             if (failed.Count > 0)
                 MessageBox.Show($"Could not {(enable ? "enable" : "disable")}:\n\n{string.Join("\n", failed)}\n\n" +
                                 "Make sure the app is running as Administrator.",
                     "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
-        private void UpdateCountLabel()
+        private void updateCountLabel()
         {
-            int enabled = _entries.Count(e => e.IsEnabled);
-            Summary.Text = $"{_entries.Count} items  ·  {enabled} enabled  ·  {_entries.Count - enabled} disabled";
+            int enabled = _entries.Count(e => e.isEnabled);
+            summary.Text = $"{_entries.Count} items  ·  {enabled} enabled  ·  {_entries.Count - enabled} disabled";
         }
     }
 
-    public class StartupEntryRow : CardRow
+    public class startupEntryRow : cardRow
     {
         private readonly CheckBox _toggle;
         private readonly Label    _nameLbl, _pubLbl, _cmdLbl, _sourceBadge, _impactBadge;
         private readonly Button   _deleteBtn;
         private bool _syncing;
 
-        public StartupEntry Entry { get; }
-        public event EventHandler<StartupEntry> ToggleRequested, DeleteRequested;
+        public startupEntry entry { get; }
+        public event EventHandler<startupEntry> toggleRequested, deleteRequested;
 
-        public StartupEntryRow(StartupEntry entry) : base(66)
+        public startupEntryRow(startupEntry entry) : base(66)
         {
-            Entry = entry;
+            this.entry = entry;
 
             _toggle = new CheckBox
             {
-                Checked = entry.IsEnabled, Size = new Size(44, 44), Location = new Point(10, 11),
+                Checked = entry.isEnabled, Size = new Size(44, 44), Location = new Point(10, 11),
                 FlatStyle = FlatStyle.Flat, Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter,
-                Font = Theme.F("Segoe UI Emoji", 14f), Cursor = Cursors.Hand, BackColor = Color.Transparent
+                Font = theme.f("Segoe UI Emoji", 14f), Cursor = Cursors.Hand, BackColor = Color.Transparent
             };
             _toggle.FlatAppearance.BorderSize = 0;
             _toggle.FlatAppearance.CheckedBackColor = _toggle.FlatAppearance.MouseOverBackColor = Color.Transparent;
-            // Programmatic syncs (RefreshState) must not raise ToggleRequested — they used to, which
+            // Programmatic syncs (refreshState) must not raise toggleRequested — they used to, which
             // re-toggled the entry straight back, and Enable/Disable All recursed through it until
             // the stack overflowed.
             _toggle.CheckedChanged += (s, e) =>
             {
-                UpdateToggleText();
-                if (!_syncing) ToggleRequested?.Invoke(this, Entry);
+                updateToggleText();
+                if (!_syncing) toggleRequested?.Invoke(this, this.entry);
             };
 
-            _nameLbl = UiHelpers.Lbl(entry.Name, Theme.Mono(8.5f, true), Theme.TEXT_PRI, 60, 10, 20);
-            _pubLbl  = UiHelpers.Lbl(entry.Publisher, Theme.Ui(8f), Theme.TEXT_DIM, 60, 30, 16);
-            _cmdLbl  = UiHelpers.Lbl(entry.Command, Theme.F("Consolas", 7f), Color.FromArgb(90, 85, 140), 60, 47, 14);
+            _nameLbl = uiHelpers.lbl(entry.name, theme.mono(8.5f, true), theme.textPri, 60, 10, 20);
+            _pubLbl  = uiHelpers.lbl(entry.publisher, theme.ui(8f), theme.textDim, 60, 30, 16);
+            _cmdLbl  = uiHelpers.lbl(entry.command, theme.f("Consolas", 7f), Color.FromArgb(90, 85, 140), 60, 47, 14);
 
-            Color src = entry.Source switch
+            Color src = entry.source switch
             {
-                StartupSource.RegistryCurrentUser  => Color.FromArgb(99, 102, 241),
-                StartupSource.RegistryLocalMachine => Color.FromArgb(251, 191, 36),
+                startupSource.registryCurrentUser  => Color.FromArgb(99, 102, 241),
+                startupSource.registryLocalMachine => Color.FromArgb(251, 191, 36),
                 _                                  => Color.FromArgb(16, 185, 129),
             };
-            Color imp = entry.ImpactColor;
-            _sourceBadge = UiHelpers.MakeBadge(entry.SourceLabel, Color.FromArgb(30, src), Color.FromArgb(180, src));
-            _impactBadge = UiHelpers.MakeBadge($"⚡ {entry.ImpactLabel} impact", Color.FromArgb(30, imp), Color.FromArgb(180, imp));
+            Color imp = entry.impactColor;
+            _sourceBadge = uiHelpers.makeBadge(entry.sourceLabel, Color.FromArgb(30, src), Color.FromArgb(180, src));
+            _impactBadge = uiHelpers.makeBadge($"⚡ {entry.impactLabel} impact", Color.FromArgb(30, imp), Color.FromArgb(180, imp));
 
             _deleteBtn = new Button
             {
-                Text = "🗑", Font = Theme.F("Segoe UI Emoji", 11f), FlatStyle = FlatStyle.Flat, Size = new Size(32, 32),
-                BackColor = Color.Transparent, ForeColor = Theme.DANGER, Cursor = Cursors.Hand
+                Text = "🗑", Font = theme.f("Segoe UI Emoji", 11f), FlatStyle = FlatStyle.Flat, Size = new Size(32, 32),
+                BackColor = Color.Transparent, ForeColor = theme.danger, Cursor = Cursors.Hand
             };
             _deleteBtn.FlatAppearance.BorderSize         = 0;
-            _deleteBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, Theme.DANGER);
-            _deleteBtn.Click += (s, e) => DeleteRequested?.Invoke(this, Entry);
+            _deleteBtn.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, theme.danger);
+            _deleteBtn.Click += (s, e) => deleteRequested?.Invoke(this, this.entry);
 
             Controls.AddRange(new Control[] { _toggle, _nameLbl, _pubLbl, _cmdLbl, _sourceBadge, _impactBadge, _deleteBtn });
-            RefreshState();
-            LayoutRow();
+            refreshState();
+            layoutRow();
         }
 
-        protected override Color Stripe => Entry.IsEnabled ? Theme.SUCCESS : Theme.BORDER;
+        protected override Color stripe => entry.isEnabled ? theme.success : theme.border;
 
-        protected override void LayoutRow()
+        protected override void layoutRow()
         {
-            int r = Place(Width - 8, _deleteBtn) - 8;
-            r = Place(r, _impactBadge) - 6;
-            r = Place(r, _sourceBadge) - 8;
+            int r = place(Width - 8, _deleteBtn) - 8;
+            r = place(r, _impactBadge) - 6;
+            r = place(r, _sourceBadge) - 8;
             _nameLbl.Width = _pubLbl.Width = _cmdLbl.Width = Math.Max(50, r - 60);
         }
 
-        private void UpdateToggleText() => _toggle.Text = _toggle.Checked ? "✅" : "⬜";
+        private void updateToggleText() => _toggle.Text = _toggle.Checked ? "✅" : "⬜";
 
-        public void RefreshState()
+        public void refreshState()
         {
-            if (InvokeRequired) { Invoke(new Action(RefreshState)); return; }
+            if (InvokeRequired) { Invoke(new Action(refreshState)); return; }
             _syncing = true;
-            _toggle.Checked = Entry.IsEnabled;
+            _toggle.Checked = entry.isEnabled;
             _syncing = false;
-            _nameLbl.ForeColor = Entry.IsEnabled ? Theme.TEXT_PRI : Theme.TEXT_DIM;
-            UpdateToggleText();
+            _nameLbl.ForeColor = entry.isEnabled ? theme.textPri : theme.textDim;
+            updateToggleText();
             Invalidate();
         }
     }

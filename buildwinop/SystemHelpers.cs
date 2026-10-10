@@ -15,24 +15,24 @@ namespace Win11Optimizer
     // ── APP VERSION ──────────────────────────────────────────────────────────
     // Read from the assembly, so <Version> in the .csproj (plus MyAppVersion in the
     // .iss) is the only thing to bump. The SDK may append "+<commit>" — strip it.
-    public static class AppVersion
+    public static class appVersion
     {
-        public static readonly string Current =
-            typeof(AppVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+        public static readonly string current =
+            typeof(appVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                 ?.InformationalVersion.Split('+')[0] ?? "0.0.0";
 
-        private const string Repo = "Corn-Systems/win11op";
-        public const string RepoUrl        = "https://github.com/" + Repo;
-        public const string ReleasesApiUrl = "https://api.github.com/repos/" + Repo + "/releases/latest";
+        private const string repo = "Corn-Systems/win11op";
+        public const string repoUrl        = "https://github.com/" + repo;
+        public const string releasesApiUrl = "https://api.github.com/repos/" + repo + "/releases/latest";
     }
 
     // ── PROCESS RUNNER ───────────────────────────────────────────────────────
     // The one hidden-process helper every shell-out goes through. Both pipes are drained
     // concurrently — reading them one after the other (or leaving one unread) deadlocks as
     // soon as a chatty child such as DISM fills the unread pipe's buffer.
-    public static class Proc
+    public static class proc
     {
-        public static (int Code, string Out, string Err) Run(string file, string args)
+        public static (int code, string output, string error) run(string file, string args)
         {
             using var p = Process.Start(new ProcessStartInfo(file, args)
             {
@@ -45,16 +45,16 @@ namespace Win11Optimizer
             return (p.ExitCode, o.Result, e.Result);
         }
 
-        public static (int Code, string Out, string Err) Cmd(string command) => Run("cmd.exe", "/c " + command);
+        public static (int code, string output, string error) cmd(string command) => run("cmd.exe", "/c " + command);
 
-        public static (int Code, string Out, string Err) PowerShell(string script) =>
-            Run("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"");
+        public static (int code, string output, string error) powerShell(string script) =>
+            run("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"");
 
         // Opens a URL or file with its default handler.
-        public static void Open(string target)
+        public static void open(string target)
         {
             try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose(); }
-            catch (Exception ex) { SessionLog.Write("OPEN " + target, ex); }
+            catch (Exception ex) { sessionLog.write("OPEN " + target, ex); }
         }
     }
 
@@ -62,59 +62,59 @@ namespace Win11Optimizer
     // The form body is full Corn Systems dark, but Windows paints the title bar
     // white by default. DWMWA_USE_IMMERSIVE_DARK_MODE flips it to dark. The
     // attribute id is 20 on Win10 20H1+ / Win11, and 19 on older 1809 builds.
-    public static class DarkTitleBar
+    public static class darkTitleBar
     {
-        [DllImport("dwmapi.dll", PreserveSig = true)]
-        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+        [DllImport("dwmapi.dll", PreserveSig = true, EntryPoint = "DwmSetWindowAttribute")]
+        private static extern int dwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
-        private const int DWMWA_USE_IMMERSIVE_DARK_MODE        = 20;
-        private const int DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19;
+        private const int dwmwaUseImmersiveDarkMode        = 20;
+        private const int dwmwaUseImmersiveDarkModeLegacy = 19;
 
-        public static void Apply(Form form)
+        public static void apply(Form form)
         {
             try
             {
                 int on = 1;
-                if (DwmSetWindowAttribute(form.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int)) != 0)
-                    DwmSetWindowAttribute(form.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY, ref on, sizeof(int));
+                if (dwmSetWindowAttribute(form.Handle, dwmwaUseImmersiveDarkMode, ref on, sizeof(int)) != 0)
+                    dwmSetWindowAttribute(form.Handle, dwmwaUseImmersiveDarkModeLegacy, ref on, sizeof(int));
             }
-            catch (Exception ex) { SessionLog.Write("DARK TITLE BAR", ex); }   // older builds without the attribute — cosmetic only
+            catch (Exception ex) { sessionLog.write("DARK TITLE BAR", ex); }   // older builds without the attribute — cosmetic only
         }
     }
 
     // ── UPDATE CHECKER ───────────────────────────────────────────────────────
     // Silent GitHub Releases check at launch. Never blocks, never throws to the
     // caller, never nags — the caller decides how to surface a newer version.
-    public static class UpdateChecker
+    public static class updateChecker
     {
         // Returns the newer tag (e.g. "1.5.0") if one exists, otherwise null.
-        public static async Task<string> CheckAsync()
+        public static async Task<string> checkAsync()
         {
             try
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
                 // GitHub's API rejects requests without a User-Agent
-                http.DefaultRequestHeaders.UserAgent.ParseAdd($"Win11Optimizer/{AppVersion.Current}");
-                using var doc = JsonDocument.Parse(await http.GetStringAsync(AppVersion.ReleasesApiUrl).ConfigureAwait(false));
+                http.DefaultRequestHeaders.UserAgent.ParseAdd($"Win11Optimizer/{appVersion.current}");
+                using var doc = JsonDocument.Parse(await http.GetStringAsync(appVersion.releasesApiUrl).ConfigureAwait(false));
                 string tag = (doc.RootElement.GetProperty("tag_name").GetString() ?? "").TrimStart('v', 'V');
-                return Version.TryParse(tag, out var remote) && Version.TryParse(AppVersion.Current, out var local) && remote > local
+                return Version.TryParse(tag, out var remote) && Version.TryParse(appVersion.current, out var local) && remote > local
                     ? tag : null;
             }
-            catch (Exception ex) { SessionLog.Write("UPDATE CHECK", ex); return null; }   // offline, rate-limited, blocked by our own hosts tweak…
+            catch (Exception ex) { sessionLog.write("UPDATE CHECK", ex); return null; }   // offline, rate-limited, blocked by our own hosts tweak…
         }
     }
 
     // ── EXPLORER RESTART ─────────────────────────────────────────────────────
     // Many shell/UI tweaks (visual effects, menu delay, taskbar icons, animation
     // masks) take effect after an Explorer restart — no full reboot needed.
-    public static class ExplorerHelper
+    public static class explorerHelper
     {
-        public static bool Restart(out string error)
+        public static bool restart(out string error)
         {
             error = null;
             try
             {
-                Proc.Run("taskkill.exe", "/f /im explorer.exe");
+                proc.run("taskkill.exe", "/f /im explorer.exe");
                 Thread.Sleep(500);   // give the shell a beat to fully exit before relaunching
                 // UseShellExecute so Explorer starts as the shell, not a child window
                 Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true })?.Dispose();
@@ -127,11 +127,11 @@ namespace Win11Optimizer
     // ── REBOOT IMPACT CLASSIFICATION ─────────────────────────────────────────
     // Tags each tweak with what it needs to take full effect, so the app can
     // report exactly what's pending instead of a blanket "reboot recommended".
-    public static class RebootInfo
+    public static class rebootInfo
     {
         // Tweaks that need a full reboot (bcdedit, interrupt routing, kernel
         // timer, protocol/feature removal, memory manager changes).
-        private static readonly HashSet<string> NeedsReboot = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> needsReboot = new(StringComparer.OrdinalIgnoreCase)
         {
             "Game_HAGS",            // GPU scheduler flips at boot
             "Perf_TimerRes",        // global timer resolution policy
@@ -155,19 +155,19 @@ namespace Win11Optimizer
             "Lap_SettingsSync",     // SettingSyncHost reads policy at sign-in
         };
 
-        // Tweaks that only need the shell restarted (disjoint from NeedsReboot).
-        private static readonly HashSet<string> NeedsExplorer = new(StringComparer.OrdinalIgnoreCase)
+        // Tweaks that only need the shell restarted (disjoint from needsReboot).
+        private static readonly HashSet<string> needsExplorer = new(StringComparer.OrdinalIgnoreCase)
         {
             "Perf_VisualFX", "Adv_Animations", "Resp_MenuDelay", "Resp_WinTips",
             "Resp_SuggestedContent", "Priv_ChatIcon", "Priv_BingStart", "Priv_CloudContent",
             "Perf_Widgets", "Resp_ClassicContext", "Resp_EndTask", "Lap_Transparency", "Lap_SearchHighlights",
         };
 
-        public static (List<string> reboot, List<string> explorer) Split(IEnumerable<TweakEntry> entries)
+        public static (List<string> reboot, List<string> explorer) split(IEnumerable<tweakEntry> entries)
         {
-            var list = entries.Where(e => e.TweakKey != null).ToList();
-            List<string> Of(HashSet<string> set) => list.Where(e => set.Contains(e.TweakKey)).Select(e => e.Name).ToList();
-            return (Of(NeedsReboot), Of(NeedsExplorer));
+            var list = entries.Where(e => e.tweakKey != null).ToList();
+            List<string> of(HashSet<string> set) => list.Where(e => set.Contains(e.tweakKey)).Select(e => e.name).ToList();
+            return (of(needsReboot), of(needsExplorer));
         }
     }
 }

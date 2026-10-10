@@ -3,33 +3,38 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows.Forms;
 
 namespace Win11Optimizer
 {
-    public static class TweakProfile
+    public static class tweakProfile
     {
-        private const string Filter = "Tweak Profile (*.w11profile)|*.w11profile|JSON (*.json)|*.json";
+        private const string filter = "Tweak Profile (*.w11profile)|*.w11profile|JSON (*.json)|*.json";
 
-        public class Profile
+        public class profile
         {
-            public string       Name      { get; set; } = "My Profile";
-            public string       Version   { get; set; } = AppVersion.Current;
-            public string       CreatedAt { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            public List<string> TweakKeys { get; set; } = new();
+            [JsonPropertyName("Name")]
+            public string       name      { get; set; } = "My Profile";
+            [JsonPropertyName("Version")]
+            public string       version   { get; set; } = appVersion.current;
+            [JsonPropertyName("CreatedAt")]
+            public string       createdAt { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            [JsonPropertyName("TweakKeys")]
+            public List<string> tweakKeys { get; set; } = new();
         }
 
-        public static void Export(IEnumerable<string> checkedKeys)
+        public static void export(IEnumerable<string> checkedKeys)
         {
             using var dlg = new SaveFileDialog
             {
-                Title = "Export Tweak Profile", Filter = Filter, DefaultExt = "w11profile",
+                Title = "Export Tweak Profile", Filter = filter, DefaultExt = "w11profile",
                 FileName = $"win11op_profile_{DateTime.Now:yyyyMMdd}"
             };
             if (dlg.ShowDialog() != DialogResult.OK) return;
             try
             {
-                File.WriteAllText(dlg.FileName, JsonSerializer.Serialize(new Profile { TweakKeys = checkedKeys.ToList() }, AppPaths.Indented));
+                File.WriteAllText(dlg.FileName, JsonSerializer.Serialize(new profile { tweakKeys = checkedKeys.ToList() }, appPaths.indented));
                 MessageBox.Show($"Profile exported to:\n{dlg.FileName}", "Export Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -38,30 +43,30 @@ namespace Win11Optimizer
             }
         }
 
-        // Returns loaded TweakKeys on success, null on cancel/error
-        public static List<string> Import()
+        // Returns loaded tweakKeys on success, null on cancel/error
+        public static List<string> import()
         {
-            using var dlg = new OpenFileDialog { Title = "Import Tweak Profile", Filter = Filter };
+            using var dlg = new OpenFileDialog { Title = "Import Tweak Profile", Filter = filter };
             if (dlg.ShowDialog() != DialogResult.OK) return null;
             try
             {
-                var p = JsonSerializer.Deserialize<Profile>(File.ReadAllText(dlg.FileName));
-                if (p?.TweakKeys == null || p.TweakKeys.Count == 0)
+                var p = JsonSerializer.Deserialize<profile>(File.ReadAllText(dlg.FileName));
+                if (p?.tweakKeys == null || p.tweakKeys.Count == 0)
                 {
                     MessageBox.Show("Profile is empty or invalid.", "Import Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return null;
                 }
 
                 // Same case-insensitive match the GUI and CLI use when applying the keys
-                var known = TweakCatalog.All.Select(t => t.TweakKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                string ver = string.IsNullOrEmpty(p.Version) ? "unknown version"
-                           : p.Version == AppVersion.Current ? $"v{p.Version}"
-                           : $"v{p.Version} (this app is v{AppVersion.Current})";
+                var known = tweakCatalog.all.Select(t => t.tweakKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                string ver = string.IsNullOrEmpty(p.version) ? "unknown version"
+                           : p.version == appVersion.current ? $"v{p.version}"
+                           : $"v{p.version} (this app is v{appVersion.current})";
                 MessageBox.Show(
-                    $"Profile loaded: \"{p.Name}\"\nCreated: {p.CreatedAt}  ·  {ver}\n\n" +
-                    $"{p.TweakKeys.Count(known.Contains)} of {p.TweakKeys.Count} tweaks matched this version.",
+                    $"Profile loaded: \"{p.name}\"\nCreated: {p.createdAt}  ·  {ver}\n\n" +
+                    $"{p.tweakKeys.Count(known.Contains)} of {p.tweakKeys.Count} tweaks matched this version.",
                     "Import Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return p.TweakKeys;
+                return p.tweakKeys;
             }
             catch (Exception ex)
             {

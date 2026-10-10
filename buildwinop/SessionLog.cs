@@ -11,43 +11,43 @@ namespace Win11Optimizer
     // that gets compiled out entirely in a Release build (DebugType=none in
     // this csproj means [Conditional("DEBUG")] Debug.WriteLine calls are dead
     // code in the shipped .exe — they were never actually logging anything).
-    public static class SessionLog
+    public static class sessionLog
     {
         private static readonly object _lock = new object();
-        private const int RetentionDays = 14;
+        private const int retentionDays = 14;
         private static bool _pruned;
 
-        public static string LogsDir => Path.Combine(AppPaths.DataDir, "logs");
-        public static string CurrentFile => Path.Combine(LogsDir, $"{DateTime.Now:yyyy-MM-dd}.log");
+        public static string logsDir => Path.Combine(appPaths.dataDir, "logs");
+        public static string currentFile => Path.Combine(logsDir, $"{DateTime.Now:yyyy-MM-dd}.log");
 
-        public static void Write(string message)
+        public static void write(string message)
         {
             if (string.IsNullOrEmpty(message)) return;
             try
             {
                 lock (_lock)
                 {
-                    Directory.CreateDirectory(LogsDir);
-                    if (!_pruned) { Prune(); _pruned = true; }
-                    File.AppendAllText(CurrentFile,
+                    Directory.CreateDirectory(logsDir);
+                    if (!_pruned) { prune(); _pruned = true; }
+                    File.AppendAllText(currentFile,
                         $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}", Encoding.UTF8);
                 }
             }
             catch { /* logging must never take the app down */ }
         }
 
-        public static void Write(string tag, Exception ex)
+        public static void write(string tag, Exception ex)
         {
             if (ex == null) return;
-            Write($"[{tag}] {ex.GetType().Name}: {ex.Message}");
+            write($"[{tag}] {ex.GetType().Name}: {ex.Message}");
         }
 
-        private static void Prune()
+        private static void prune()
         {
             try
             {
-                var cutoff = DateTime.Now.AddDays(-RetentionDays);
-                foreach (var f in Directory.GetFiles(LogsDir, "*.log")
+                var cutoff = DateTime.Now.AddDays(-retentionDays);
+                foreach (var f in Directory.GetFiles(logsDir, "*.log")
                              .Where(f => File.GetLastWriteTime(f) < cutoff))
                     File.Delete(f);
             }

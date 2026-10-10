@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using Microsoft.Win32;
-using static Win11Optimizer.TweakEngine;
+using static Win11Optimizer.tweakEngine;
 
 namespace Win11Optimizer
 {
@@ -11,43 +11,43 @@ namespace Win11Optimizer
     // whether win11op has ever run. true = applied, false = not applied (Windows default),
     // null = can't tell. Tweaks with no readable state (BCD, netsh globals, AppX removal,
     // MMAgent, WMI adapter config, scheduled tasks, the SMBv1 feature) fall through to null.
-    public static class TweakDetector
+    public static class tweakDetector
     {
         // Registry DWORD (or a numeric string); null if absent or unreadable
-        private static int? Dw(string key, string name)
+        private static int? dw(string key, string name)
         {
             try
             {
                 object v = Registry.GetValue(key, name, null);
                 return v is int i ? i : int.TryParse(v?.ToString(), out int p) ? p : null;
             }
-            catch (Exception ex) { SessionLog.Write("DETECT " + name, ex); return null; }
+            catch (Exception ex) { sessionLog.write("DETECT " + name, ex); return null; }
         }
 
-        private static string Sz(string key, string name)
+        private static string sz(string key, string name)
         {
             try { return Registry.GetValue(key, name, null)?.ToString(); }
-            catch (Exception ex) { SessionLog.Write("DETECT " + name, ex); return null; }
+            catch (Exception ex) { sessionLog.write("DETECT " + name, ex); return null; }
         }
 
         // `sc qc` → true when the service's start type is DISABLED
-        private static bool? ServiceDisabled(string name)
+        private static bool? serviceDisabled(string name)
         {
             try
             {
-                string o = Proc.Run("sc.exe", $"qc {name}").Out;
+                string o = proc.run("sc.exe", $"qc {name}").output;
                 if (o.Contains("DISABLED")) return true;
                 return new[] { "AUTO_START", "DEMAND_START", "BOOT_START", "SYSTEM_START" }.Any(o.Contains) ? false : null;
             }
-            catch (Exception ex) { SessionLog.Write("DETECT " + name, ex); return null; }
+            catch (Exception ex) { sessionLog.write("DETECT " + name, ex); return null; }
         }
 
         // Nagle — the first adapter that has TcpAckFrequency decides
-        private static bool? NagleDisabled()
+        private static bool? nagleDisabled()
         {
             try
             {
-                using var root = Registry.LocalMachine.OpenSubKey(NaglePath);
+                using var root = Registry.LocalMachine.OpenSubKey(naglePath);
                 if (root == null) return null;
                 foreach (string sub in root.GetSubKeyNames())
                 {
@@ -56,70 +56,70 @@ namespace Win11Optimizer
                 }
                 return false;   // no adapter has it = not applied
             }
-            catch (Exception ex) { SessionLog.Write("DETECT NAGLE", ex); return null; }
+            catch (Exception ex) { sessionLog.write("DETECT NAGLE", ex); return null; }
         }
 
-        private static bool HostsBlockApplied()
+        private static bool hostsBlockApplied()
         {
-            try { return File.Exists(HostsPath) && File.ReadAllText(HostsPath).Contains(HostsMarkerStart); }
-            catch (Exception ex) { SessionLog.Write("DETECT HOSTS", ex); return false; }
+            try { return File.Exists(hostsPath) && File.ReadAllText(hostsPath).Contains(hostsMarkerStart); }
+            catch (Exception ex) { sessionLog.write("DETECT HOSTS", ex); return false; }
         }
 
-        internal static bool? HibernationEnabled() => Dw(Ctl + @"\Power", "HibernateEnabled") is int v ? v != 0 : null;
+        internal static bool? hibernationEnabled() => dw(ctl + @"\Power", "HibernateEnabled") is int v ? v != 0 : null;
 
         // true when every part this device exposes already satisfies the tweak; null when none are readable
-        private static bool? PowerApplied(PowerPart[] parts)
+        private static bool? powerApplied(powerPart[] parts)
         {
             bool any = false;
             foreach (var p in parts)
             {
-                var info = QueryPower(p.Sub, p.Setting);
-                if (info?.Dc is not int dc || PowerTarget(p, info) is not int target) continue;
+                var info = queryPower(p.sub, p.setting);
+                if (info?.dc is not int dc || powerTarget(p, info) is not int target) continue;
                 any = true;
-                if (!p.Satisfied(dc, target)) return false;
+                if (!p.satisfied(dc, target)) return false;
             }
             return any ? true : null;
         }
 
         // Every installed browser / Teams already prefers the integrated GPU; null when there are none
-        private static bool? GpuPreferencesApplied()
+        private static bool? gpuPreferencesApplied()
         {
-            var apps = Hardware.GpuPreferenceApps();
-            return apps.Count == 0 ? null : apps.All(a => Sz(GpuPrefKey, a) == "GpuPreference=1;");
+            var apps = hardware.gpuPreferenceApps();
+            return apps.Count == 0 ? null : apps.All(a => sz(gpuPrefKey, a) == "GpuPreference=1;");
         }
 
         // One line for the tooltip: what the battery-side settings are right now, and what the tweak would change them to
-        public static string CurrentSummary(string key)
+        public static string currentSummary(string key)
         {
-            if (!LaptopPower.TryGetValue(key, out var parts)) return null;
+            if (!laptopPower.TryGetValue(key, out var parts)) return null;
             var bits = new System.Collections.Generic.List<string>();
             foreach (var p in parts)
             {
-                var info = QueryPower(p.Sub, p.Setting);
-                if (info?.Dc is not int dc || PowerTarget(p, info) is not int target) continue;
-                bits.Add(p.Satisfied(dc, target)
-                    ? $"{p.Short} {p.Show(info, dc)} ✔"
-                    : $"{p.Short} {p.Show(info, dc)} → {p.Show(info, target)}");
+                var info = queryPower(p.sub, p.setting);
+                if (info?.dc is not int dc || powerTarget(p, info) is not int target) continue;
+                bits.Add(p.satisfied(dc, target)
+                    ? $"{p.shortName} {p.show(info, dc)} ✔"
+                    : $"{p.shortName} {p.show(info, dc)} → {p.show(info, target)}");
             }
             return bits.Count == 0 ? null : string.Join("  ·  ", bits);
         }
 
         // True when every display adapter already has the given interrupt value set
-        private static bool? AllGpus(string sub, string name, int expected)
+        private static bool? allGpus(string sub, string name, int expected)
         {
-            var gpus = GpuInterruptKeys();
-            return gpus.Count == 0 ? null : gpus.All(g => Dw(g + sub, name) == expected);
+            var gpus = gpuInterruptKeys();
+            return gpus.Count == 0 ? null : gpus.All(g => dw(g + sub, name) == expected);
         }
 
-        public static bool? Check(string key)
+        public static bool? check(string key)
         {
             if (key == null) return null;
             // Laptop power-plan tweaks: every readable part of the active plan's battery (DC) values must be satisfied
-            if (LaptopPower.TryGetValue(key, out var parts))
+            if (laptopPower.TryGetValue(key, out var parts))
             {
-                bool? power = PowerApplied(parts);
+                bool? power = powerApplied(parts);
                 if (key != "Lap_GpuPowerSaving") return power;
-                bool? apps = GpuPreferencesApplied();
+                bool? apps = gpuPreferencesApplied();
                 return power == null ? apps : apps == null ? power : power == true && apps == true;
             }
             try
@@ -127,97 +127,97 @@ namespace Win11Optimizer
                 return key switch
                 {
                     // ── PERFORMANCE ───────────────────────────────────────────
-                    "Perf_PowerPlan"        => Sz(Ctl + @"\Power\User\PowerSchemes", "ActivePowerScheme")
+                    "Perf_PowerPlan"        => sz(ctl + @"\Power\User\PowerSchemes", "ActivePowerScheme")
                                                    ?.Equals("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", StringComparison.OrdinalIgnoreCase),
-                    "Perf_PowerThrottle"    => Dw(Ctl + @"\Power\PowerThrottling", "PowerThrottlingOff") == 1,
-                    "Perf_SysMain"          => ServiceDisabled("SysMain"),
-                    "Perf_WSearch"          => ServiceDisabled("WSearch"),
-                    "Perf_StartupDelay"     => Dw(CuCv + @"\Explorer\Serialize", "StartupDelayInMSec") == 0,
-                    "Perf_VisualFX"         => Dw(CuCv + @"\Explorer\VisualEffects", "VisualFXSetting") == 2,
+                    "Perf_PowerThrottle"    => dw(ctl + @"\Power\PowerThrottling", "PowerThrottlingOff") == 1,
+                    "Perf_SysMain"          => serviceDisabled("SysMain"),
+                    "Perf_WSearch"          => serviceDisabled("WSearch"),
+                    "Perf_StartupDelay"     => dw(cuCv + @"\Explorer\Serialize", "StartupDelayInMSec") == 0,
+                    "Perf_VisualFX"         => dw(cuCv + @"\Explorer\VisualEffects", "VisualFXSetting") == 2,
                     // fsutil keeps these in the FileSystem key
-                    "Perf_NtfsLastAccess"   => Dw(Ctl + @"\FileSystem", "NtfsDisableLastAccessUpdate") is int v && (v & 1) == 1,
-                    "Perf_8Dot3"            => Dw(Ctl + @"\FileSystem", "NtfsDisable8dot3NameCreation") == 1,
-                    "Perf_Hibernate"        => HibernationEnabled() == false,
-                    "Perf_TimerRes"         => Dw(Ctl + @"\Session Manager\kernel", "GlobalTimerResolutionRequests") == 1,
-                    "Perf_Widgets"          => Dw(LmPol + @"\Dsh", "AllowNewsAndInterests") == 0,
+                    "Perf_NtfsLastAccess"   => dw(ctl + @"\FileSystem", "NtfsDisableLastAccessUpdate") is int v && (v & 1) == 1,
+                    "Perf_8Dot3"            => dw(ctl + @"\FileSystem", "NtfsDisable8dot3NameCreation") == 1,
+                    "Perf_Hibernate"        => hibernationEnabled() == false,
+                    "Perf_TimerRes"         => dw(ctl + @"\Session Manager\kernel", "GlobalTimerResolutionRequests") == 1,
+                    "Perf_Widgets"          => dw(lmPol + @"\Dsh", "AllowNewsAndInterests") == 0,
 
                     // ── PRIVACY ───────────────────────────────────────────────
-                    "Priv_Telemetry"        => Dw(LmPol + @"\Windows\DataCollection", "AllowTelemetry") == 0,
-                    "Priv_DiagTrack"        => ServiceDisabled("DiagTrack"),
-                    "Priv_AdvertisingId"    => Dw(CuCv + @"\AdvertisingInfo", "Enabled") == 0,
-                    "Priv_BingStart"        => Dw(CuPol + @"\Explorer", "DisableSearchBoxSuggestions") == 1,
-                    "Priv_Cortana"          => Dw(CuCv + @"\Search", "CortanaConsent") == 0,
-                    "Priv_ActivityFeed"     => Dw(LmPol + @"\Windows\System", "EnableActivityFeed") == 0,
-                    "Priv_Location"         => Dw(LmPol + @"\Windows\LocationAndSensors", "DisableLocation") == 1,
-                    "Priv_Camera"           => Dw(LmPol + @"\Windows\AppPrivacy", "LetAppsAccessCamera") == 2,
-                    "Priv_WER"              => Dw(LmPol + @"\Windows\Windows Error Reporting", "Disabled") == 1,
-                    "Priv_SmartScreen"      => Dw(LmPol + @"\Windows\System", "EnableSmartScreen") == 0,
-                    "Priv_AppTracking"      => Dw(ExplorerAdvanced, "Start_TrackProgs") == 0,
-                    "Priv_Feedback"         => Dw(CuSw + @"\Siuf\Rules", "NumberOfSIUFInPeriod") == 0,
-                    "Priv_ChatIcon"         => Dw(ExplorerAdvanced, "TaskbarMn") == 0,
-                    "Priv_Recall"           => Dw(LmPol + @"\Windows\WindowsAI", "DisableAIDataAnalysis") == 1,
-                    "Priv_Copilot"          => Dw(LmPol + @"\Windows\WindowsCopilot", "TurnOffWindowsCopilot") == 1,
-                    "Priv_HostsBlock"       => HostsBlockApplied(),
-                    "Priv_CloudContent"     => Dw(LmPol + @"\Windows\CloudContent", "DisableWindowsConsumerFeatures") == 1,
-                    "Priv_TailoredExp"      => Dw(CuCv + @"\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled") == 0,
-                    "Priv_InkTyping"        => Dw(CuSw + @"\InputPersonalization", "RestrictImplicitTextCollection") == 1,
+                    "Priv_Telemetry"        => dw(lmPol + @"\Windows\DataCollection", "AllowTelemetry") == 0,
+                    "Priv_DiagTrack"        => serviceDisabled("DiagTrack"),
+                    "Priv_AdvertisingId"    => dw(cuCv + @"\AdvertisingInfo", "Enabled") == 0,
+                    "Priv_BingStart"        => dw(cuPol + @"\Explorer", "DisableSearchBoxSuggestions") == 1,
+                    "Priv_Cortana"          => dw(cuCv + @"\Search", "CortanaConsent") == 0,
+                    "Priv_ActivityFeed"     => dw(lmPol + @"\Windows\System", "EnableActivityFeed") == 0,
+                    "Priv_Location"         => dw(lmPol + @"\Windows\LocationAndSensors", "DisableLocation") == 1,
+                    "Priv_Camera"           => dw(lmPol + @"\Windows\AppPrivacy", "LetAppsAccessCamera") == 2,
+                    "Priv_WER"              => dw(lmPol + @"\Windows\Windows Error Reporting", "Disabled") == 1,
+                    "Priv_SmartScreen"      => dw(lmPol + @"\Windows\System", "EnableSmartScreen") == 0,
+                    "Priv_AppTracking"      => dw(explorerAdvanced, "Start_TrackProgs") == 0,
+                    "Priv_Feedback"         => dw(cuSw + @"\Siuf\Rules", "NumberOfSIUFInPeriod") == 0,
+                    "Priv_ChatIcon"         => dw(explorerAdvanced, "TaskbarMn") == 0,
+                    "Priv_Recall"           => dw(lmPol + @"\Windows\WindowsAI", "DisableAIDataAnalysis") == 1,
+                    "Priv_Copilot"          => dw(lmPol + @"\Windows\WindowsCopilot", "TurnOffWindowsCopilot") == 1,
+                    "Priv_HostsBlock"       => hostsBlockApplied(),
+                    "Priv_CloudContent"     => dw(lmPol + @"\Windows\CloudContent", "DisableWindowsConsumerFeatures") == 1,
+                    "Priv_TailoredExp"      => dw(cuCv + @"\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled") == 0,
+                    "Priv_InkTyping"        => dw(cuSw + @"\InputPersonalization", "RestrictImplicitTextCollection") == 1,
 
                     // ── RESPONSIVENESS ────────────────────────────────────────
-                    "Resp_MenuDelay"        => Sz(Desktop, "MenuShowDelay") == "0",
-                    "Resp_AppKill"          => Sz(Desktop, "WaitToKillAppTimeout") == "2000",
-                    "Resp_ServiceKill"      => Sz(Ctl, "WaitToKillServiceTimeout") == "2000",
-                    "Resp_AutoEndTasks"     => Sz(Desktop, "AutoEndTasks") == "1",
-                    "Resp_VerboseStatus"    => Dw(LmCv + @"\Policies\System", "verbosestatus") == 1,
-                    "Resp_WinTips"          => Dw(ContentDelivery, "SoftLandingEnabled") == 0,
-                    "Resp_SuggestedContent" => Dw(ContentDelivery, "SubscribedContent-338393Enabled") == 0,
-                    "Resp_ClassicContext"   => Sz(ClassicMenuKey, "") == "",
-                    "Resp_EndTask"          => Dw(ExplorerAdvanced + @"\TaskbarDeveloperSettings", "TaskbarEndTask") == 1,
+                    "Resp_MenuDelay"        => sz(desktop, "MenuShowDelay") == "0",
+                    "Resp_AppKill"          => sz(desktop, "WaitToKillAppTimeout") == "2000",
+                    "Resp_ServiceKill"      => sz(ctl, "WaitToKillServiceTimeout") == "2000",
+                    "Resp_AutoEndTasks"     => sz(desktop, "AutoEndTasks") == "1",
+                    "Resp_VerboseStatus"    => dw(lmCv + @"\Policies\System", "verbosestatus") == 1,
+                    "Resp_WinTips"          => dw(contentDelivery, "SoftLandingEnabled") == 0,
+                    "Resp_SuggestedContent" => dw(contentDelivery, "SubscribedContent-338393Enabled") == 0,
+                    "Resp_ClassicContext"   => sz(classicMenuKey, "") == "",
+                    "Resp_EndTask"          => dw(explorerAdvanced + @"\TaskbarDeveloperSettings", "TaskbarEndTask") == 1,
 
                     // ── GAMING ────────────────────────────────────────────────
-                    "Game_HAGS"             => Dw(Ctl + @"\GraphicsDrivers", "HwSchMode") == 2,
-                    "Game_GameMode"         => Dw(CuSw + @"\GameBar", "AllowAutoGameMode") == 1,
-                    "Game_MouseAccel"       => new[] { "MouseSpeed", "MouseThreshold1", "MouseThreshold2" }.All(n => Sz(CuPanel + @"\Mouse", n) == "0"),
-                    "Game_CPUPriority"      => Dw(Ctl + @"\PriorityControl", "Win32PrioritySeparation") == 38,
-                    "Game_DVR"              => Dw(CuCv + @"\GameDVR", "AppCaptureEnabled") == 0,
-                    "Game_FSO"              => Dw(@"HKEY_CURRENT_USER\System\GameConfigStore", "GameDVR_FSEBehaviorMode") == 2,
-                    "Game_GPUPower"         => Dw(GpuClassKey, "PerfLevelSrc") == 0x3322,
-                    "Game_NvidiaTelemetry"  => ServiceDisabled("NvTelemetryContainer"),
-                    "Game_StickyKeys"       => Sz(CuPanel + @"\Accessibility\StickyKeys", "Flags") == "506",
+                    "Game_HAGS"             => dw(ctl + @"\GraphicsDrivers", "HwSchMode") == 2,
+                    "Game_GameMode"         => dw(cuSw + @"\GameBar", "AllowAutoGameMode") == 1,
+                    "Game_MouseAccel"       => new[] { "MouseSpeed", "MouseThreshold1", "MouseThreshold2" }.All(n => sz(cuPanel + @"\Mouse", n) == "0"),
+                    "Game_CPUPriority"      => dw(ctl + @"\PriorityControl", "Win32PrioritySeparation") == 38,
+                    "Game_DVR"              => dw(cuCv + @"\GameDVR", "AppCaptureEnabled") == 0,
+                    "Game_FSO"              => dw(@"HKEY_CURRENT_USER\System\GameConfigStore", "GameDVR_FSEBehaviorMode") == 2,
+                    "Game_GPUPower"         => dw(gpuClassKey, "PerfLevelSrc") == 0x3322,
+                    "Game_NvidiaTelemetry"  => serviceDisabled("NvTelemetryContainer"),
+                    "Game_StickyKeys"       => sz(cuPanel + @"\Accessibility\StickyKeys", "Flags") == "506",
 
                     // ── NETWORK ───────────────────────────────────────────────
-                    "Net_Nagle"             => NagleDisabled(),
-                    "Net_Throttle"          => Dw(MmProfile, "NetworkThrottlingIndex") == unchecked((int)0xffffffff),
-                    "Net_MMResponsive"      => Dw(MmProfile, "SystemResponsiveness") == 0,
-                    "Net_DoH"               => Dw(DnsParams, "EnableAutoDoh") == 2,
-                    "Net_DeliveryOpt"       => Dw(LmPol + @"\Windows\DeliveryOptimization", "DODownloadMode") == 0,
+                    "Net_Nagle"             => nagleDisabled(),
+                    "Net_Throttle"          => dw(mmProfile, "NetworkThrottlingIndex") == unchecked((int)0xffffffff),
+                    "Net_MMResponsive"      => dw(mmProfile, "SystemResponsiveness") == 0,
+                    "Net_DoH"               => dw(dnsParams, "EnableAutoDoh") == 2,
+                    "Net_DeliveryOpt"       => dw(lmPol + @"\Windows\DeliveryOptimization", "DODownloadMode") == 0,
 
                     // ── SECURITY ──────────────────────────────────────────────
-                    "Sec_AutoRun"           => Dw(LmCv + @"\Policies\Explorer", "NoDriveTypeAutoRun") == 0xFF,
-                    "Sec_RDP"               => Dw(Ctl + @"\Terminal Server", "fDenyTSConnections") == 1,
-                    "Sec_Defender"          => Dw(LmPol + @"\Windows Defender", "DisableAntiSpyware") == 0,
+                    "Sec_AutoRun"           => dw(lmCv + @"\Policies\Explorer", "NoDriveTypeAutoRun") == 0xFF,
+                    "Sec_RDP"               => dw(ctl + @"\Terminal Server", "fDenyTSConnections") == 1,
+                    "Sec_Defender"          => dw(lmPol + @"\Windows Defender", "DisableAntiSpyware") == 0,
 
                     // ── ADVANCED ──────────────────────────────────────────────
-                    "Adv_ProcessorScheduling" => Dw(Ctl + @"\PriorityControl", "Win32PrioritySeparation") == 38,
-                    "Adv_MsiMode"           => AllGpus(MsiSub, "MSISupported", 1),
-                    "Adv_IrqAffinity"       => AllGpus(AffinitySub, "DevicePolicy", 5),
-                    "Adv_BoostMode"         => Dw(BoostModeKey, "Attributes") == 2,
-                    "Adv_Animations"        => Dw(ExplorerAdvanced, "TaskbarAnimations") == 0,
+                    "Adv_ProcessorScheduling" => dw(ctl + @"\PriorityControl", "Win32PrioritySeparation") == 38,
+                    "Adv_MsiMode"           => allGpus(msiSub, "MSISupported", 1),
+                    "Adv_IrqAffinity"       => allGpus(affinitySub, "DevicePolicy", 5),
+                    "Adv_BoostMode"         => dw(boostModeKey, "Attributes") == 2,
+                    "Adv_Animations"        => dw(explorerAdvanced, "TaskbarAnimations") == 0,
 
                     // ── LAPTOP (registry-based; power-plan ones handled above) ─
-                    "Lap_IndexOnBattery"    => Dw(LmPol + @"\Windows\Windows Search", "PreventIndexOnBattery") == 1,
-                    "Lap_BackgroundApps"    => Dw(LmPol + @"\Windows\AppPrivacy", "LetAppsRunInBackground") == 2,
-                    "Lap_EdgeBackground"    => Dw(LmPol + @"\Edge", "StartupBoostEnabled") == 0,
-                    "Lap_Transparency"      => Dw(CuCv + @"\Themes\Personalize", "EnableTransparency") == 0,
-                    "Lap_VoiceActivation"   => Dw(AppPrivacy, "LetAppsActivateWithVoice") == 2,
-                    "Lap_CrossDevice"       => Dw(LmPol + @"\Windows\System", "EnableCdp") == 0,
-                    "Lap_SearchHighlights"  => Dw(CuCv + @"\SearchSettings", "IsDynamicSearchBoxEnabled") == 0,
-                    "Lap_SettingsSync"      => Dw(LmPol + @"\Windows\SettingSync", "DisableSettingSync") == 2,
-                    "Lap_MaintenanceWake"   => Dw(MaintenanceKey, "WakeUp") == 0 || Dw(LmPol + @"\Windows\ScheduledMaintenance", "WakeUp") == 0,
+                    "Lap_IndexOnBattery"    => dw(lmPol + @"\Windows\Windows Search", "PreventIndexOnBattery") == 1,
+                    "Lap_BackgroundApps"    => dw(lmPol + @"\Windows\AppPrivacy", "LetAppsRunInBackground") == 2,
+                    "Lap_EdgeBackground"    => dw(lmPol + @"\Edge", "StartupBoostEnabled") == 0,
+                    "Lap_Transparency"      => dw(cuCv + @"\Themes\Personalize", "EnableTransparency") == 0,
+                    "Lap_VoiceActivation"   => dw(appPrivacy, "LetAppsActivateWithVoice") == 2,
+                    "Lap_CrossDevice"       => dw(lmPol + @"\Windows\System", "EnableCdp") == 0,
+                    "Lap_SearchHighlights"  => dw(cuCv + @"\SearchSettings", "IsDynamicSearchBoxEnabled") == 0,
+                    "Lap_SettingsSync"      => dw(lmPol + @"\Windows\SettingSync", "DisableSettingSync") == 2,
+                    "Lap_MaintenanceWake"   => dw(maintenanceKey, "WakeUp") == 0 || dw(lmPol + @"\Windows\ScheduledMaintenance", "WakeUp") == 0,
 
                     _ => null
                 };
             }
-            catch (Exception ex) { SessionLog.Write("DETECT " + key, ex); return null; }
+            catch (Exception ex) { sessionLog.write("DETECT " + key, ex); return null; }
         }
     }
 }

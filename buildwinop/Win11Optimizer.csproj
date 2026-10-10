@@ -5,6 +5,9 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>disable</Nullable>
+    <!-- Type names are camelCase project-wide, so one-word types (theme, proc, hardware…) trigger
+         CS8981 "lower-case type names may be reserved by the language". Deliberate. -->
+    <NoWarn>$(NoWarn);CS8981</NoWarn>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Win11Optimizer</AssemblyName>
     <RootNamespace>Win11Optimizer</RootNamespace>

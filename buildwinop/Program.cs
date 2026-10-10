@@ -7,11 +7,11 @@ using System.Windows.Forms;
 
 namespace Win11Optimizer
 {
-    static class Program
+    static class program
     {
         // Prevents two copies racing on the same Data\*.json files (registry/service
         // tweaks and their Undo state aren't safe to write from two processes at once).
-        private const string MutexName = @"Global\CornSystems.Win11Optimizer.SingleInstance";
+        private const string mutexName = @"Global\CornSystems.Win11Optimizer.SingleInstance";
 
         [STAThread]
         static void Main(string[] args)
@@ -23,12 +23,12 @@ namespace Win11Optimizer
                 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.ThreadException += (s, e) => LogCrash(e.Exception);
-                AppDomain.CurrentDomain.UnhandledException += (s, e) => LogCrash(e.ExceptionObject as Exception);
+                Application.ThreadException += (s, e) => logCrash(e.Exception);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => logCrash(e.ExceptionObject as Exception);
 
-                AppPaths.MigrateLegacyFiles();   // also creates Data\
+                appPaths.migrateLegacyFiles();   // also creates Data\
 
-                mutex = new Mutex(true, MutexName, out owned);
+                mutex = new Mutex(true, mutexName, out owned);
                 if (!owned)
                 {
                     // args.Length > 0 almost always means a scripted/CLI invocation — give it a console
@@ -42,19 +42,19 @@ namespace Win11Optimizer
                     return;
                 }
 
-                WinVersion.Detect();
-                ChangeLog.Load();
-                AppliedState.Load();
-                TweakEngine.LoadBackups();   // so per-category Undo survives an app restart
+                winVersion.detect();
+                changeLog.load();
+                appliedState.load();
+                tweakEngine.loadBackups();   // so per-category Undo survives an app restart
 
                 // Headless mode: --apply / --list-tweaks / --help run without the GUI
-                if (CliRunner.TryRun(args, out int cliExit))
+                if (cliRunner.tryRun(args, out int cliExit))
                 {
                     Environment.ExitCode = cliExit;
                     return;
                 }
 
-                bool admin = IsAdmin();
+                bool admin = isAdmin();
                 if (!admin && MessageBox.Show(
                         "Win11 Optimizer needs Administrator privileges to apply registry and service tweaks.\n\n" +
                         "Would you like to relaunch as Administrator now?",
@@ -69,13 +69,13 @@ namespace Win11Optimizer
                         Process.Start(new ProcessStartInfo { FileName = Application.ExecutablePath, UseShellExecute = true, Verb = "runas" })?.Dispose();
                         return;
                     }
-                    catch (Exception ex) { SessionLog.Write("RELAUNCH AS ADMIN", ex); }   // UAC declined — carry on unelevated
+                    catch (Exception ex) { sessionLog.write("RELAUNCH AS ADMIN", ex); }   // UAC declined — carry on unelevated
                     if (!(owned = mutex.WaitOne(0))) return;
                 }
 
-                Application.Run(new MainForm(showAdminWarning: !admin));
+                Application.Run(new mainForm(showAdminWarning: !admin));
             }
-            catch (Exception ex) { LogCrash(ex); }
+            catch (Exception ex) { logCrash(ex); }
             finally
             {
                 // Only the owner may release — a second instance releasing here used to throw on exit
@@ -84,23 +84,23 @@ namespace Win11Optimizer
             }
         }
 
-        internal static bool IsAdmin()
+        internal static bool isAdmin()
         {
             try
             {
                 using var id = WindowsIdentity.GetCurrent();
                 return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
             }
-            catch (Exception ex) { SessionLog.Write("ADMIN CHECK", ex); return false; }
+            catch (Exception ex) { sessionLog.write("ADMIN CHECK", ex); return false; }
         }
 
-        static void LogCrash(Exception ex)
+        static void logCrash(Exception ex)
         {
             try
             {
-                AppPaths.EnsureDataDir();
-                File.AppendAllText(AppPaths.CrashLog, $"[{DateTime.Now}]\n{ex}\n\n");
-                MessageBox.Show($"Crash logged to:\n{AppPaths.CrashLog}\n\n{ex?.Message}",
+                appPaths.ensureDataDir();
+                File.AppendAllText(appPaths.crashLog, $"[{DateTime.Now}]\n{ex}\n\n");
+                MessageBox.Show($"Crash logged to:\n{appPaths.crashLog}\n\n{ex?.Message}",
                     "Win11Optimizer — Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch { /* nothing left to log to — last-ditch crash handler */ }

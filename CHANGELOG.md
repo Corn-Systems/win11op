@@ -52,6 +52,8 @@ A cleanup release: a large internal refactor (≈34% less code), plus a batch of
 
 ### 🧰 Internal
 
+- **Naming:** every type, method, property, field, constant and enum member is now camelCase; only file names are PascalCase. Exceptions forced by .NET or shared code: the two namespaces, the shared `Dpi.cs`, `Main`, and the WinForms overrides. Private fields keep their `_` prefix. Saved data is unaffected — `changelog.json`, the Undo backup and `.w11profile` files keep their existing PascalCase keys (pinned with `[JsonPropertyName]`), and P/Invoke declarations now name their native entry point explicitly.
+
 - Four list tabs (Startup, Services, Driver Cleanup, Disk Cleanup) now share one base layout instead of four copies.
 - Registry paths are shared between applying and detecting a tweak, so the two can't drift apart.
 - Laptop power-plan tweaks and their detection come from a single table.

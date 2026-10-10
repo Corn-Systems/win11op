@@ -1,15 +1,15 @@
 namespace Win11Optimizer
 {
-    public class TweakEntry
+    public class tweakEntry
     {
-        public string Name          { get; set; }
-        public string Description   { get; set; }
-        public string Category      { get; set; }
-        public string Icon          { get; set; }
-        public bool   IsAdvanced    { get; set; }
-        public bool   DefaultOn     { get; set; } = true;
-        public string AdvancedKey   { get; set; }
-        public string TweakKey      { get; set; }
-        public string WhatItChanges { get; set; }   // what this tweak actually changes — shown in the hover tooltip
+        public string name          { get; set; }
+        public string description   { get; set; }
+        public string category      { get; set; }
+        public string icon          { get; set; }
+        public bool   isAdvanced    { get; set; }
+        public bool   defaultOn     { get; set; } = true;
+        public string advancedKey   { get; set; }
+        public string tweakKey      { get; set; }
+        public string whatItChanges { get; set; }   // what this tweak actually changes — shown in the hover tooltip
     }
 }

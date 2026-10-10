@@ -2,66 +2,74 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Serialization;
 
 namespace Win11Optimizer
 {
     // Tweak keys applied by this app or detected on the system. The detection scan marks
     // keys from a worker thread while the UI reads and writes them, so every access locks.
-    public static class AppliedState
+    public static class appliedState
     {
         private static readonly object _lock = new();
         private static HashSet<string> _applied = new(StringComparer.OrdinalIgnoreCase);
 
-        public static void Load()
+        public static void load()
         {
-            var list = AppPaths.LoadJson<List<string>>(AppPaths.AppliedStateFile, "APPLIEDSTATE");
+            var list = appPaths.loadJson<List<string>>(appPaths.appliedStateFile, "APPLIEDSTATE");
             if (list != null) lock (_lock) _applied = new(list, StringComparer.OrdinalIgnoreCase);
         }
 
-        public static bool IsApplied(string tweakKey) { lock (_lock) return _applied.Contains(tweakKey); }
-        public static void MarkApplied(IEnumerable<string> tweakKeys) => Update(tweakKeys, true);
-        public static void MarkUndone(IEnumerable<string> tweakKeys)  => Update(tweakKeys, false);
+        public static bool isApplied(string tweakKey) { lock (_lock) return _applied.Contains(tweakKey); }
+        public static void markApplied(IEnumerable<string> tweakKeys) => update(tweakKeys, true);
+        public static void markUndone(IEnumerable<string> tweakKeys)  => update(tweakKeys, false);
 
-        private static void Update(IEnumerable<string> keys, bool add)
+        private static void update(IEnumerable<string> keys, bool add)
         {
             lock (_lock)
             {
                 foreach (var k in keys) if (add) _applied.Add(k); else _applied.Remove(k);
-                AppPaths.SaveJson(AppPaths.AppliedStateFile, _applied.ToList(), "APPLIEDSTATE");
+                appPaths.saveJson(appPaths.appliedStateFile, _applied.ToList(), "APPLIEDSTATE");
             }
         }
     }
 
-    public static class ChangeLog
+    public static class changeLog
     {
-        public class RunEntry
+        public class runEntry
         {
-            public string       Timestamp    { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            public string       WindowsVer   { get; set; } = WinVersion.DisplayName;
-            public string       Categories   { get; set; } = "";
-            public int          Passed       { get; set; }
-            public int          Failed       { get; set; }
-            public bool         RestorePoint { get; set; }
-            public List<string> Details      { get; set; } = new();
+            [JsonPropertyName("Timestamp")]
+            public string       timestamp    { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            [JsonPropertyName("WindowsVer")]
+            public string       windowsVer   { get; set; } = winVersion.displayName;
+            [JsonPropertyName("Categories")]
+            public string       categories   { get; set; } = "";
+            [JsonPropertyName("Passed")]
+            public int          passed       { get; set; }
+            [JsonPropertyName("Failed")]
+            public int          failed       { get; set; }
+            [JsonPropertyName("RestorePoint")]
+            public bool         restorePoint { get; set; }
+            [JsonPropertyName("Details")]
+            public List<string> details      { get; set; } = new();
         }
 
-        private static List<RunEntry> _entries = new();
-        public static IReadOnlyList<RunEntry> Entries => _entries.AsReadOnly();
+        private static List<runEntry> _entries = new();
+        public static IReadOnlyList<runEntry> entries => _entries.AsReadOnly();
 
-        public static void Load() =>
-            _entries = AppPaths.LoadJson<List<RunEntry>>(AppPaths.ChangeLogFile, "CHANGELOG") ?? _entries;
+        public static void load() =>
+            _entries = appPaths.loadJson<List<runEntry>>(appPaths.changeLogFile, "CHANGELOG") ?? _entries;
 
-        public static void AddEntry(RunEntry entry)
+        public static void addEntry(runEntry entry)
         {
             _entries.Insert(0, entry);
-            AppPaths.SaveJson(AppPaths.ChangeLogFile, _entries, "CHANGELOG");
+            appPaths.saveJson(appPaths.changeLogFile, _entries, "CHANGELOG");
         }
 
-        public static void Clear()
+        public static void clear()
         {
             _entries.Clear();
-            try { if (File.Exists(AppPaths.ChangeLogFile)) File.Delete(AppPaths.ChangeLogFile); }
-            catch (Exception ex) { SessionLog.Write("CHANGELOG CLEAR", ex); }
+            try { if (File.Exists(appPaths.changeLogFile)) File.Delete(appPaths.changeLogFile); }
+            catch (Exception ex) { sessionLog.write("CHANGELOG CLEAR", ex); }
         }
     }
 }

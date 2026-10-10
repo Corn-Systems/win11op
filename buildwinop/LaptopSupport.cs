@@ -6,35 +6,35 @@ using System.Windows.Forms;
 
 namespace Win11Optimizer
 {
-    public enum Avail { Ok, Disabled, Hidden }
+    public enum avail { ok, disabled, hidden }
 
     // ── HARDWARE FACTS ────────────────────────────────────────────────────────
     // What this PC actually has, so the Laptop section only offers tweaks that can do something.
     // Facts are nullable: null = couldn't tell, and an unknown never hides or disables a tweak.
     //   Hidden   — the hardware isn't there at all (no ambient light sensor, no discrete GPU, no HDD…)
     //   Disabled — the tweak exists but can't work here (no battery, S3 sleep instead of Modern Standby)
-    public static class Hardware
+    public static class hardware
     {
-        public static bool  HasBattery    => !SystemInformation.PowerStatus.BatteryChargeStatus.HasFlag(BatteryChargeStatus.NoSystemBattery);
-        public static bool? ModernStandby { get; private set; }
-        public static bool? AmbientLight  { get; private set; }
-        public static bool? HybridGpu     { get; private set; }
-        public static bool? Hdd           { get; private set; }
-        public static bool? WiFi          { get; private set; }
-        public static bool? GraphicsSlider { get; private set; }
-        public static volatile bool Ready;
+        public static bool  hasBattery    => !SystemInformation.PowerStatus.BatteryChargeStatus.HasFlag(BatteryChargeStatus.NoSystemBattery);
+        public static bool? modernStandby { get; private set; }
+        public static bool? ambientLight  { get; private set; }
+        public static bool? hybridGpu     { get; private set; }
+        public static bool? hdd           { get; private set; }
+        public static bool? wiFi          { get; private set; }
+        public static bool? graphicsSlider { get; private set; }
+        public static volatile bool ready;
 
         private static string _teamsPath;
 
         // Runs the slow probes (one PowerShell call + powercfg) — call from a background thread.
-        public static void Detect()
+        public static void detect()
         {
             try
             {
-                ModernStandby  = DetectModernStandby();
-                GraphicsSlider = TweakEngine.HasGraphicsSlider();
+                modernStandby  = detectModernStandby();
+                graphicsSlider = tweakEngine.hasGraphicsSlider();
 
-                var (code, outp, _) = Proc.PowerShell(
+                var (code, outp, _) = proc.powerShell(
                     "$v = @(Get-CimInstance Win32_VideoController | Where-Object { $_.PNPDeviceID -like 'PCI*' }); " +
                     "'GPU=' + $v.Count; " +
                     "'LIGHT=' + $(if (Get-PnpDevice -Class Sensor -ErrorAction SilentlyContinue | Where-Object { $_.FriendlyName -match 'Light|Illuminance' }) {1} else {0}); " +
@@ -45,67 +45,67 @@ namespace Win11Optimizer
                 {
                     var facts = outp.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                                     .Select(l => l.Split('=', 2)).Where(a => a.Length == 2).ToDictionary(a => a[0], a => a[1]);
-                    bool? Flag(string k) => facts.TryGetValue(k, out var v) ? v == "1" : null;
-                    HybridGpu    = facts.TryGetValue("GPU", out var g) && int.TryParse(g, out int n) ? n >= 2 : null;
-                    AmbientLight = Flag("LIGHT");
-                    Hdd          = Flag("HDD");
-                    WiFi         = Flag("WIFI");
+                    bool? flag(string k) => facts.TryGetValue(k, out var v) ? v == "1" : null;
+                    hybridGpu    = facts.TryGetValue("GPU", out var g) && int.TryParse(g, out int n) ? n >= 2 : null;
+                    ambientLight = flag("LIGHT");
+                    hdd          = flag("HDD");
+                    wiFi         = flag("WIFI");
                     _teamsPath   = facts.TryGetValue("TEAMS", out var t) && t.Length > 0 ? t : null;
                 }
             }
-            catch (Exception ex) { SessionLog.Write("HARDWARE", ex); }
-            Ready = true;
+            catch (Exception ex) { sessionLog.write("HARDWARE", ex); }
+            ready = true;
         }
 
         // `powercfg /a` lists available sleep states first, then unavailable ones with an indented
         // reason under each. An S0 line with no indented reason after it is an available one.
-        private static bool? DetectModernStandby()
+        private static bool? detectModernStandby()
         {
             try
             {
-                var lines = (Proc.Cmd("powercfg /a").Out ?? "").Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+                var lines = (proc.cmd("powercfg /a").output ?? "").Split('\n').Select(l => l.TrimEnd('\r')).ToList();
                 if (lines.All(l => l.Trim().Length == 0)) return null;
-                int Indent(string l) => l.Length - l.TrimStart().Length;
+                int indent(string l) => l.Length - l.TrimStart().Length;
                 for (int i = 0; i < lines.Count; i++)
                 {
                     if (!lines[i].Contains("S0 Low Power Idle", StringComparison.OrdinalIgnoreCase)) continue;
                     var next = lines.Skip(i + 1).FirstOrDefault(l => l.Trim().Length > 0);
-                    return next == null || Indent(next) <= Indent(lines[i]);
+                    return next == null || indent(next) <= indent(lines[i]);
                 }
                 return false;
             }
-            catch (Exception ex) { SessionLog.Write("MODERN STANDBY", ex); return null; }
+            catch (Exception ex) { sessionLog.write("MODERN STANDBY", ex); return null; }
         }
 
         // Tweaks that only act on the battery side of the power plan (or on battery-only behaviour)
-        private static bool BatteryOnly(string key) =>
+        private static bool batteryOnly(string key) =>
             key is "Lap_IndexOnBattery" or "Lap_NicPower" ||
-            (TweakEngine.LaptopPower.ContainsKey(key) && key != "Lap_GpuPowerSaving");   // that one also has a per-app half that works on AC
+            (tweakEngine.laptopPower.ContainsKey(key) && key != "Lap_GpuPowerSaving");   // that one also has a per-app half that works on AC
 
         // Hardware check for one tweak key. Non-Laptop keys are always available.
-        public static (Avail state, string reason) Check(string key)
+        public static (avail state, string reason) check(string key)
         {
-            if (key == null || !key.StartsWith("Lap_", StringComparison.Ordinal)) return (Avail.Ok, null);
+            if (key == null || !key.StartsWith("Lap_", StringComparison.Ordinal)) return (avail.ok, null);
 
             // Hardware that isn't there → hide
             switch (key)
             {
-                case "Lap_AdaptiveBright" when AmbientLight   == false: return (Avail.Hidden, "no ambient light sensor");
-                case "Lap_GpuPowerSaving" when HybridGpu      == false: return (Avail.Hidden, "no second GPU");
-                case "Lap_DiskIdle"       when Hdd            == false: return (Avail.Hidden, "no hard disk drive");
-                case "Lap_WifiPowerSave"  when WiFi           == false: return (Avail.Hidden, "no Wi-Fi adapter");
-                case "Lap_GraphicsSlider" when GraphicsSlider == false: return (Avail.Hidden, "no Intel/AMD graphics power slider");
+                case "Lap_AdaptiveBright" when ambientLight   == false: return (avail.hidden, "no ambient light sensor");
+                case "Lap_GpuPowerSaving" when hybridGpu      == false: return (avail.hidden, "no second GPU");
+                case "Lap_DiskIdle"       when hdd            == false: return (avail.hidden, "no hard disk drive");
+                case "Lap_WifiPowerSave"  when wiFi           == false: return (avail.hidden, "no Wi-Fi adapter");
+                case "Lap_GraphicsSlider" when graphicsSlider == false: return (avail.hidden, "no Intel/AMD graphics power slider");
             }
 
             // Present but pointless here → grey out with the reason
-            if (BatteryOnly(key) && !HasBattery) return (Avail.Disabled, "no battery detected");
-            if (key == "Lap_StandbyNetwork" && ModernStandby == false) return (Avail.Disabled, "needs Modern Standby (S0)");
-            return (Avail.Ok, null);
+            if (batteryOnly(key) && !hasBattery) return (avail.disabled, "no battery detected");
+            if (key == "Lap_StandbyNetwork" && modernStandby == false) return (avail.disabled, "needs Modern Standby (S0)");
+            return (avail.ok, null);
         }
 
         // Browsers and Teams that are installed, for the per-app GPU preference. Store Teams needs a
         // PowerShell lookup, so it only comes from the cached probe result.
-        public static List<string> GpuPreferenceApps(bool includeStoreTeams = false)
+        public static List<string> gpuPreferenceApps(bool includeStoreTeams = false)
         {
             string pf   = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                    pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
@@ -131,9 +131,9 @@ namespace Win11Optimizer
     // 1 = Light: invisible or near-invisible changes, nothing you'd notice day to day
     // 2 = Balanced: the everyday battery set (what the old single Laptop preset did, plus the new tweaks)
     // 3 = Max battery: noticeable trade-offs — dimmer screen, no background Store apps, no boost clocks…
-    public static class LaptopTiers
+    public static class laptopTiers
     {
-        private static readonly Dictionary<string, int> Map = new()
+        private static readonly Dictionary<string, int> map = new()
         {
             // Light
             ["Lap_WakeTimers"] = 1, ["Lap_UsbSuspend"] = 1, ["Lap_EnergySaver"] = 1, ["Lap_AdaptiveBright"] = 1,
@@ -153,6 +153,6 @@ namespace Win11Optimizer
         };
 
         // 0 for anything that isn't a tiered Laptop tweak
-        public static int Of(string key) => key != null && Map.TryGetValue(key, out int t) ? t : 0;
+        public static int of(string key) => key != null && map.TryGetValue(key, out int t) ? t : 0;
     }
 }

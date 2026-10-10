@@ -8,44 +8,44 @@ using CornSystems;   // shared Dpi helper — byte-identical across Corn Systems
 
 namespace Win11Optimizer
 {
-    public enum AppliedSource { None, AppliedByApp, DetectedOnSystem }
-    public enum TileStatus    { None, Running, Done }
+    public enum appliedSource { none, appliedByApp, detectedOnSystem }
+    public enum tileStatus    { none, running, done }
 
-    public class TweakTile : Panel
+    public class tweakTile : Panel
     {
         private bool          _checked;
-        private AppliedSource _applied;
-        private TileStatus    _status;
+        private appliedSource _applied;
+        private tileStatus    _status;
         private string        _statusText = "";
         private Color         _statusColor;
         private Label         _nameLabel, _descLabel;
 
-        public TweakEntry Entry { get; }
-        public event EventHandler CheckedChanged;
+        public tweakEntry entry { get; }
+        public event EventHandler checkedChanged;
 
         // Why this tweak can't be used on this PC (null = usable). An unavailable tile can never be
         // checked, so presets, Select All and profile imports all skip it without special-casing.
-        public string UnavailableReason { get; private set; }
+        public string unavailableReason { get; private set; }
         // Hardware isn't present at all — the grid hides the tile instead of greying it
-        public bool HiddenByHardware { get; private set; }
+        public bool hiddenByHardware { get; private set; }
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public bool IsChecked
+        public bool isChecked
         {
             get => _checked;
             set
             {
-                _checked  = value && UnavailableReason == null;
+                _checked  = value && unavailableReason == null;
                 value     = _checked;
                 // Subtle gold-tinted warm surface when selected — matches website featured card
-                BackColor = value ? Color.FromArgb(22, 19, 38) : Theme.CARD;
+                BackColor = value ? Color.FromArgb(22, 19, 38) : theme.card;
                 Invalidate();
-                CheckedChanged?.Invoke(this, EventArgs.Empty);
+                checkedChanged?.Invoke(this, EventArgs.Empty);
             }
         }
 
         // Each category gets a distinct accent so tiles read apart at a glance
-        private static readonly Dictionary<string, Color> CatAccent = new()
+        private static readonly Dictionary<string, Color> catAccent = new()
         {
             ["Performance"]    = Color.FromArgb(204, 255,   0),  // lime
             ["Privacy"]        = Color.FromArgb(139,  92, 246),  // violet
@@ -58,23 +58,23 @@ namespace Win11Optimizer
             ["Laptop"]         = Color.FromArgb( 56, 189, 248),  // sky blue (matches Laptop preset)
         };
 
-        public TweakTile(TweakEntry entry)
+        public tweakTile(tweakEntry entry)
         {
-            Entry     = entry;
+            this.entry     = entry;
             Size      = new Size(Dpi.S(230), Dpi.S(130));
-            BackColor = Theme.CARD;
+            BackColor = theme.card;
             Margin    = new Padding(Dpi.S(5));
             Cursor    = Cursors.Hand;
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
                      | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 
-            Color ac = CatAccent.TryGetValue(entry.Category, out var c) ? c : Theme.ACCENT;
+            Color ac = catAccent.TryGetValue(entry.category, out var c) ? c : theme.accent;
 
             Paint += (s, e) =>
             {
                 var g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using var border = new Pen(_checked ? Color.FromArgb(120, ac) : Theme.BORDER, 1f);
+                using var border = new Pen(_checked ? Color.FromArgb(120, ac) : theme.border, 1f);
                 g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
                 using var accent = new SolidBrush(_checked ? ac : Color.FromArgb(60, ac));
                 g.FillRectangle(accent, 0, 0, 2, Height);
@@ -83,31 +83,31 @@ namespace Win11Optimizer
                 {
                     // Checkmark indicator — filled accent circle with a dark check
                     g.FillEllipse(accent, Width - 20, 8, 12, 12);
-                    using var tick = new Pen(Theme.ACCENT_TEXT, 1.5f);
+                    using var tick = new Pen(theme.accentText, 1.5f);
                     g.DrawLines(tick, new[] { new Point(Width - 18, 14), new Point(Width - 15, 17), new Point(Width - 11, 11) });
                 }
 
                 // "Already applied" indicator — bottom-left dot + label
-                if (_applied != AppliedSource.None && _status == TileStatus.None)
+                if (_applied != appliedSource.none && _status == tileStatus.none)
                 {
-                    Color dot = _applied == AppliedSource.DetectedOnSystem ? Theme.SKY_PURPLE : Theme.SUCCESS;
+                    Color dot = _applied == appliedSource.detectedOnSystem ? theme.skyPurple : theme.success;
                     using var dotBr = new SolidBrush(dot);
                     using var txtBr = new SolidBrush(Color.FromArgb(80, dot));
                     g.FillEllipse(dotBr, 10, Height - 16, 6, 6);
-                    g.DrawString("applied", Theme.Mono(6.5f), txtBr, 20, Height - 18);
+                    g.DrawString("applied", theme.mono(6.5f), txtBr, 20, Height - 18);
                 }
 
                 if (_statusText.Length > 0)
                 {
                     using var sb = new SolidBrush(_statusColor);
-                    g.DrawString(_statusText, Theme.Mono(7f), sb, 12, Height - 18);
+                    g.DrawString(_statusText, theme.mono(7f), sb, 12, Height - 18);
                 }
 
-                if (UnavailableReason != null)
+                if (unavailableReason != null)
                 {
-                    using var sb  = new SolidBrush(Theme.WARNING);
+                    using var sb  = new SolidBrush(theme.warning);
                     using var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-                    g.DrawString("⛔ " + UnavailableReason, Theme.Mono(6.5f), sb, new RectangleF(10, Height - 18, Width - 16, 14), fmt);
+                    g.DrawString("⛔ " + unavailableReason, theme.mono(6.5f), sb, new RectangleF(10, Height - 18, Width - 16, 14), fmt);
                 }
             };
 
@@ -115,24 +115,24 @@ namespace Win11Optimizer
             {
                 new Label
                 {
-                    Text = entry.Icon, Font = Theme.F("Segoe UI Emoji", 18f), BackColor = Color.Transparent,
+                    Text = entry.icon, Font = theme.f("Segoe UI Emoji", 18f), BackColor = Color.Transparent,
                     Size = new Size(Dpi.S(40), Dpi.S(40)), Location = new Point(Dpi.S(8), Dpi.S(8)),
                     TextAlign = ContentAlignment.MiddleCenter
                 },
                 new Label
                 {
-                    Text = entry.Name, Font = Theme.Mono(7.5f, true), ForeColor = Theme.TEXT_PRI, BackColor = Color.Transparent,
+                    Text = entry.name, Font = theme.mono(7.5f, true), ForeColor = theme.textPri, BackColor = Color.Transparent,
                     Size = new Size(Dpi.S(170), Dpi.S(40)), Location = new Point(Dpi.S(54), Dpi.S(8)),
                     AutoEllipsis = true, UseMnemonic = false
                 },
                 new Label
                 {
-                    Text = entry.Description, Font = Theme.Ui(7.5f), ForeColor = Theme.TEXT_DIM, BackColor = Color.Transparent,
+                    Text = entry.description, Font = theme.ui(7.5f), ForeColor = theme.textDim, BackColor = Color.Transparent,
                     Size = new Size(Dpi.S(218), Dpi.S(38)), Location = new Point(Dpi.S(10), Dpi.S(74))
                 },
                 new Label
                 {
-                    Text = entry.IsAdvanced ? "⚠ ADV" : entry.Category.ToUpper(), Font = Theme.Mono(6.5f, true),
+                    Text = entry.isAdvanced ? "⚠ ADV" : entry.category.ToUpper(), Font = theme.mono(6.5f, true),
                     ForeColor = Color.FromArgb(180, ac), BackColor = Color.FromArgb(30, ac),
                     AutoSize = true, Location = new Point(Dpi.S(10), Dpi.S(52)), Padding = new Padding(3, 1, 3, 1)
                 },
@@ -140,41 +140,41 @@ namespace Win11Optimizer
 
             (_nameLabel, _descLabel) = ((Label)Controls[1], (Label)Controls[2]);
 
-            void Toggle(object s, EventArgs e) { if (UnavailableReason == null) IsChecked = !_checked; }
-            Click += Toggle;
-            foreach (Control child in Controls) child.Click += Toggle;
-            MouseEnter += (s, e) => { if (!_checked && UnavailableReason == null) BackColor = Theme.SURFACE; };
-            MouseLeave += (s, e) => { if (!_checked && UnavailableReason == null) BackColor = Theme.CARD; };
+            void toggle(object s, EventArgs e) { if (unavailableReason == null) isChecked = !_checked; }
+            Click += toggle;
+            foreach (Control child in Controls) child.Click += toggle;
+            MouseEnter += (s, e) => { if (!_checked && unavailableReason == null) BackColor = theme.surface; };
+            MouseLeave += (s, e) => { if (!_checked && unavailableReason == null) BackColor = theme.card; };
         }
 
         // Marks the tile unusable (reason) or usable again (null). Unchecks it first, so a tile
         // selected before the hardware scan finished can't slip into a run.
-        public void SetAvailability(Avail state, string reason)
+        public void setAvailability(avail state, string reason)
         {
-            UnavailableReason = state == Avail.Ok ? null : reason ?? "not available";
-            HiddenByHardware  = state == Avail.Hidden;
-            if (UnavailableReason != null && _checked) IsChecked = false;
-            bool off = UnavailableReason != null;
+            unavailableReason = state == avail.ok ? null : reason ?? "not available";
+            hiddenByHardware  = state == avail.hidden;
+            if (unavailableReason != null && _checked) isChecked = false;
+            bool off = unavailableReason != null;
             Cursor = off ? Cursors.Default : Cursors.Hand;
-            _nameLabel.ForeColor = off ? Theme.TEXT_SEC : Theme.TEXT_PRI;
-            _descLabel.ForeColor = off ? Theme.TEXT_SEC : Theme.TEXT_DIM;
+            _nameLabel.ForeColor = off ? theme.textSec : theme.textPri;
+            _descLabel.ForeColor = off ? theme.textSec : theme.textDim;
             foreach (Control c in Controls) c.Cursor = Cursor;
             Invalidate();
         }
 
-        public void SetApplied(AppliedSource source)
+        public void setApplied(appliedSource source)
         {
             _applied = source;
             Invalidate();
         }
 
-        public void SetStatus(TileStatus status)
+        public void setStatus(tileStatus status)
         {
             _status = status;
             (_statusText, _statusColor) = status switch
             {
-                TileStatus.Running => ("⏳ Running...", Theme.WARNING),
-                TileStatus.Done    => ("✔ Done", Theme.SUCCESS),
+                tileStatus.running => ("⏳ Running...", theme.warning),
+                tileStatus.done    => ("✔ Done", theme.success),
                 _                  => ("", _statusColor)
             };
             Invalidate();
