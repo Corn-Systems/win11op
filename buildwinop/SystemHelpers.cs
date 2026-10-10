@@ -153,6 +153,16 @@ namespace Win11Optimizer
             "Lap_VoiceActivation",  // AppPrivacy policy applied at sign-in
             "Lap_CrossDevice",      // CDPUserSvc reads policy at service start
             "Lap_SettingsSync",     // SettingSyncHost reads policy at sign-in
+            "Perf_ReservedStorage", // servicing stack applies the change at boot
+            "Priv_AppDiagInfo",     // AppPrivacy policy applied at sign-in
+            "Priv_OneDrive",        // OneDrive reads the policy at sign-in
+            "Priv_ClipboardSync",   // clipboard user service reads policy at start
+            "Sec_LLMNR",            // DNS client reads policy at service start
+            "Sec_Teredo",           // IPv6 transition policy applied at boot
+            "Sec_PS2",              // optional-feature removal finishes at boot
+            "Net_NicPower",         // adapter driver re-reads its properties on restart
+            "Adv_VbsOff",           // VBS / HVCI toggles at boot
+            "Adv_Mpo",              // Desktop Window Manager reads it at start
         };
 
         // Tweaks that only need the shell restarted (disjoint from needsReboot).
@@ -161,6 +171,7 @@ namespace Win11Optimizer
             "Perf_VisualFX", "Adv_Animations", "Resp_MenuDelay", "Resp_WinTips",
             "Resp_SuggestedContent", "Priv_ChatIcon", "Priv_BingStart", "Priv_CloudContent",
             "Perf_Widgets", "Resp_ClassicContext", "Resp_EndTask", "Lap_Transparency", "Lap_SearchHighlights",
+            "Priv_RecentFiles", "Priv_SearchCloud", "Resp_NagScreens", "Resp_ThisPC", "Resp_TaskbarClean", "Sec_ShowExt",
         };
 
         public static (List<string> reboot, List<string> explorer) split(IEnumerable<tweakEntry> entries)

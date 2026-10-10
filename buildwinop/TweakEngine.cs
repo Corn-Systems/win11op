@@ -54,6 +54,17 @@ namespace Win11Optimizer
         internal const string appPrivacy       = lmPol + @"\Windows\AppPrivacy";
         internal const string maintenanceKey   = lm + @"\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance";
         internal const string gpuPrefKey       = cuSw + @"\DirectX\UserGpuPreferences";
+        internal const string appCompat        = lmPol + @"\Windows\AppCompat";
+        internal const string searchSettings   = cuCv + @"\SearchSettings";
+        internal const string reserveManager   = lmCv + @"\ReserveManager";
+        internal const string transitionPolicy = lmPol + @"\Windows\TCPIP\v6Transition";
+        internal const string firewallPolicy   = svc + @"\SharedAccess\Parameters\FirewallPolicy";
+        internal const string defenderPolicy   = lmPol + @"\Windows Defender";
+        internal const string deviceGuard      = ctl + @"\DeviceGuard";
+        internal const string edgePolicy       = lmPol + @"\Edge";
+        internal const string dwmKey           = lm + @"\SOFTWARE\Microsoft\Windows\Dwm";
+        internal const string netClassKey      = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}";
+        internal const string powerPlanUltimate = "e9a42b02-d5df-448d-aa00-03f14749eb61", powerPlanHigh = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 
         // ── BACKUP / RESTORE ──────────────────────────────────────────────
         public class backupEntry
@@ -73,6 +84,8 @@ namespace Win11Optimizer
         }
 
         private const string powerCfgKind = "PowerCfg";
+        // Backups that aren't registry values. keyPath = <PREFIX>\<target>, valueName = what was changed, valueData = the original.
+        private const string markerKind = "Marker", dnsKind = "Dns", firewallKind = "Firewall";
         private static readonly List<backupEntry> _backups = new();
         private static readonly HashSet<string>   _appliedCategories = new(StringComparer.OrdinalIgnoreCase);
         public static bool hasBackup(string category) => _appliedCategories.Contains(category);
@@ -150,6 +163,7 @@ namespace Win11Optimizer
                         powerTouched = true;
                         res.Add(new tweakResult { name = $"Restored power setting {p[3]} ({b.valueName})", success = code == 0 });
                     }
+                    else if (restoreSpecial(b) is { } special) res.Add(special);
                     else if (b.valueKind == nicPowerKind)
                     {
                         string adapter = b.keyPath[(b.keyPath.IndexOf('\\') + 1)..].Replace("'", "''");
@@ -185,6 +199,66 @@ namespace Win11Optimizer
             if (!_backups.Exists(b => same(b.category, category))) _appliedCategories.Remove(category);
             saveBackups();
             return res;
+        }
+
+        private static void addBackup(string kind, string prefix, string target, string valueName, string original)
+        {
+            string keyPath = prefix + @"\" + target;
+            if (_currentCategory.Length > 0 && !alreadyBackedUp(_currentCategory, keyPath, valueName))
+                _backups.Add(new backupEntry
+                {
+                    category = _currentCategory, keyPath = keyPath, valueName = valueName,
+                    valueData = original, valueKind = kind, existed = true
+                });
+        }
+
+        // Remembers that a command-based tweak changed something, so Undo only reverts what it really did
+        private static void recordMarker(string id) => addBackup(markerKind, "MARKER", id, id, "");
+
+        private static readonly string[] firewallProfiles = { "Domain", "Private", "Public" };
+        private static readonly string[] firewallStates   = { "True", "False", "NotConfigured" };
+
+        // Restores the non-registry backups. Everything read back from the backup file is validated before it
+        // reaches a command line. Returns null when the entry isn't one of these kinds.
+        private static tweakResult restoreSpecial(backupEntry b)
+        {
+            string target = b.keyPath.Contains('\\') ? b.keyPath[(b.keyPath.IndexOf('\\') + 1)..] : "";
+            string quoted = target.Replace("'", "''");
+            switch (b.valueKind)
+            {
+                case markerKind when b.valueName == "ReservedStorage":
+                    return new tweakResult { name = "Re-enabled Reserved Storage", success = exec("DISM.exe /Online /Set-ReservedStorageState /State:Enabled") == 0 };
+                case markerKind when b.valueName == "PowerShell2":
+                    return new tweakResult
+                    {
+                        name = "Re-enabled PowerShell 2.0",
+                        success = proc.powerShell("'MicrosoftWindowsPowerShellV2Root','MicrosoftWindowsPowerShellV2' | ForEach-Object { " +
+                                                  "Enable-WindowsOptionalFeature -Online -FeatureName $_ -NoRestart -ErrorAction Stop | Out-Null }").code == 0
+                    };
+                case markerKind:
+                    return new tweakResult { name = "Unknown marker " + b.valueName, success = false, error = "Not recognised" };
+
+                case dnsKind when target.Length > 0 && !target.Contains('"'):
+                    var servers = b.valueData.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (!servers.All(a => System.Net.IPAddress.TryParse(a, out _)))
+                        return new tweakResult { name = $"Restore DNS on {target}", success = false, error = "Saved DNS servers are invalid" };
+                    string what = servers.Length == 0 ? "-ResetServerAddresses" : $"-ServerAddresses ({string.Join(",", servers.Select(a => $"'{a}'"))})";
+                    return new tweakResult
+                    {
+                        name = $"Restored DNS servers on {target}",
+                        success = proc.powerShell($"Set-DnsClientServerAddress -InterfaceAlias '{quoted}' {what} -ErrorAction Stop").code == 0
+                    };
+
+                case firewallKind when firewallProfiles.Contains(target) && firewallStates.Contains(b.valueData):
+                    return new tweakResult
+                    {
+                        name = $"Restored firewall {target} profile",
+                        success = proc.powerShell($"Set-NetFirewallProfile -Profile {target} -Enabled {b.valueData} -ErrorAction Stop").code == 0
+                    };
+                case dnsKind or firewallKind:
+                    return new tweakResult { name = $"Restore {b.valueKind} backup", success = false, error = "Saved backup entry is invalid" };
+            }
+            return null;
         }
 
         private static string displayName(string valueName) => string.IsNullOrEmpty(valueName) ? "(Default)" : valueName;
@@ -354,20 +428,23 @@ namespace Win11Optimizer
         internal static void invalidatePower() { lock (_powerLock) _powerSnap = null; }
 
         // ── LAPTOP POWER-PLAN TWEAKS ──────────────────────────────────────
-        // One battery-side (DC) value. Ok decides whether the current value already satisfies the
+        // One power-plan value (battery side unless ac is set). Ok decides whether the current value already satisfies the
         // tweak (so nothing is written or backed up, and a stricter user setting is never loosened);
         // Fmt/Short render it for the tooltip. byName picks the option whose driver-supplied name
-        // contains the text (Intel/AMD slider indexes differ by vendor) instead of a fixed Dc.
-        internal sealed record powerPart(string sub, string setting, int dc, string label, string shortName,
-            Func<int, string> fmt = null, Func<int, int, bool> ok = null, string byName = null)
+        // contains the text (Intel/AMD slider indexes differ by vendor) instead of a fixed target.
+        internal sealed record powerPart(string sub, string setting, int target, string label, string shortName,
+            Func<int, string> fmt = null, Func<int, int, bool> ok = null, string byName = null, bool ac = false)
         {
-            public bool satisfied(int cur, int target) => ok != null ? ok(cur, target) : cur == target;
+            public bool satisfied(int cur, int want) => ok != null ? ok(cur, want) : cur == want;
+            // Which side of the plan this part edits: battery (DC) by default, plugged-in (AC) for the desktop-latency tweaks
+            public int?   now(powerInfo info) => ac ? info.ac : info.dc;
+            public string side                => ac ? "AC" : "DC";
             public string show(powerInfo info, int v) =>
                 fmt?.Invoke(v) ?? info?.options.FirstOrDefault(o => o.index == v).name ?? v.ToString();
         }
 
         internal static int? powerTarget(powerPart p, powerInfo info) =>
-            p.byName == null ? p.dc
+            p.byName == null ? p.target
             : info.options.Where(o => o.name.Contains(p.byName, StringComparison.OrdinalIgnoreCase))
                           .Select(o => (int?)o.index).FirstOrDefault();
 
@@ -382,28 +459,28 @@ namespace Win11Optimizer
         private static bool atLeast(int cur, int min) => cur >= min;
         private static bool notNothing(int cur, int _) => cur != 0;               // lid: anything but "Do nothing"
 
-        // Sets a power setting's battery (DC) value on the active scheme, recording the previous
-        // value so Undo can put it back. Plugged-in (AC) behaviour is never touched.
+        // Sets one power setting on the active scheme (the battery side unless the part says otherwise),
+        // recording the previous value so Undo can put it back. The other side is never touched.
         private enum powerResult { changed, already, unsupported, failed }
 
         private static powerResult applyPowerPart(powerPart p, string scheme)
         {
             var info = queryPower(p.sub, p.setting);
-            if (info?.dc is not int cur || powerTarget(p, info) is not int target) return powerResult.unsupported;
+            if (info == null || p.now(info) is not int cur || powerTarget(p, info) is not int target) return powerResult.unsupported;
 
             if (p.satisfied(cur, target)) { report($"{p.label} (already set)"); return powerResult.already; }
 
             string keyPath = $@"POWERCFG\{scheme}\{p.sub}\{p.setting}";
-            if (_currentCategory.Length > 0 && !alreadyBackedUp(_currentCategory, keyPath, "DC"))
+            if (_currentCategory.Length > 0 && !alreadyBackedUp(_currentCategory, keyPath, p.side))
                 _backups.Add(new backupEntry
                 {
-                    category = _currentCategory, keyPath = keyPath, valueName = "DC",
+                    category = _currentCategory, keyPath = keyPath, valueName = p.side,
                     valueData = cur.ToString(), valueKind = powerCfgKind, existed = true
                 });
-            int code = exec($"powercfg /setdcvalueindex {scheme} {p.sub} {p.setting} {target} && powercfg /setactive SCHEME_CURRENT");
+            int code = exec($"powercfg /set{p.side.ToLowerInvariant()}valueindex {scheme} {p.sub} {p.setting} {target} && powercfg /setactive SCHEME_CURRENT");
             report(p.label, code == 0, code == 0 ? null : $"exit code {code}");
             if (code != 0) return powerResult.failed;
-            info.dc = target;
+            if (p.ac) info.ac = target; else info.dc = target;
             return powerResult.changed;
         }
 
@@ -457,14 +534,14 @@ namespace Win11Optimizer
         private const string subAmdSlider     = "c763b4ec-0e50-4b6b-9bed-2b92a6ee884e";
         private const string amdOverlay       = "7ec1751b-60ed-4588-afb5-9819d3d77d90";
 
-        // Laptop power-plan tweaks, one entry per tweak: the first part is the headline setting,
+        // Power-plan tweaks (Laptop battery side, plus the plugged-in Game_AcLatency), one entry per tweak: the first part is the headline setting,
         // the rest are companions that only exist on some hardware (a tweak fails only if NONE of
         // its parts are supported here). tweakDetector and the tooltip's "now" line read the same table.
-        private static powerPart p(string sub, string setting, int dc, string label, string shortName,
-            Func<int, string> fmt = null, Func<int, int, bool> ok = null, string byName = null) =>
-            new(sub, setting, dc, label, shortName, fmt, ok, byName);
+        private static powerPart p(string sub, string setting, int target, string label, string shortName,
+            Func<int, string> fmt = null, Func<int, int, bool> ok = null, string byName = null, bool ac = false) =>
+            new(sub, setting, target, label, shortName, fmt, ok, byName, ac);
 
-        internal static readonly Dictionary<string, powerPart[]> laptopPower = new()
+        internal static readonly Dictionary<string, powerPart[]> powerTweaks = new()
         {
             ["Lap_EnergySaver"] =
             [
@@ -568,12 +645,22 @@ namespace Win11Optimizer
                 p(subIntelGfx,   intelGfxPower, 0, "Intel graphics power → maximum battery life", "Intel graphics", byName: "battery"),
                 p(subAmdSlider,  amdOverlay,    0, "AMD power slider → battery saver", "AMD slider", byName: "battery"),
             ],
+            // Desktop mirror of the Laptop ASPM / USB tweaks: plugged-in side, trading idle power for latency
+            ["Game_AcLatency"] =
+            [
+                p(subUsb,        usbSuspend, 0, "USB selective suspend off (plugged in)", "USB suspend", opts("Disabled", "Enabled"), ac: true),
+                p(subPciExpress, aspm,       0, "PCIe link state power management off (plugged in)", "Link state power", opts("Off", "Moderate", "Maximum savings"), ac: true),
+            ],
             // Companion: the powercfg side of "prefer integrated GPU" (the per-app side is in applyGpuPreferences)
             ["Lap_GpuPowerSaving"] =
             [
                 p(subGraphics, gpuPrefPolicy, 1, "GPU preference policy → low power (battery)", "GPU policy", opts("None", "Low power")),
             ],
         };
+
+        // Game_GPUPower also keeps the display awake while plugged in — backed up like any power value so Undo restores it
+        private static readonly powerPart displayNeverOffAc =
+            p(subVideo, videoIdle, 0, "Display never turns off while plugged in", "Screen off after", secs, ac: true);
 
         // Need hibernation on — refuse rather than silently re-enabling what Performance → Disable Hibernation turned off
         private static readonly HashSet<string> needsHibernation = new() { "Lap_CritHibernate", "Lap_HibernateAfter" };
@@ -636,6 +723,148 @@ namespace Win11Optimizer
                 }
             }
             catch (Exception ex) { report(name, false, ex.Message); }
+        }
+
+        // ── POWER PLAN ────────────────────────────────────────────────────
+        // Ultimate Performance where Windows will provide it, High Performance otherwise. Duplicating a
+        // scheme onto its own GUID is idempotent and makes it selectable on builds that ship it hidden.
+        private static void applyPerformancePlan()
+        {
+            foreach (var (guid, label) in new[] { (powerPlanUltimate, "Ultimate Performance"), (powerPlanHigh, "High Performance") })
+            {
+                exec($"powercfg -duplicatescheme {guid} {guid}");   // fails harmlessly if it already exists or isn't offered
+                if (exec($"powercfg -setactive {guid}") != 0) continue;
+                invalidatePower();
+                report($"{label} power plan");
+                return;
+            }
+            report("Performance power plan", false, "Neither Ultimate nor High Performance is available on this PC");
+        }
+
+        // ── RESERVED STORAGE ──────────────────────────────────────────────
+        private static void applyReservedStorage()
+        {
+            const string name = "Disable Reserved Storage";
+            if (Registry.GetValue(reserveManager, "ShippedWithReserves", null) is int and 0) { report(name + " (already off)"); return; }
+            int code = exec("DISM.exe /Online /Set-ReservedStorageState /State:Disabled");
+            report(name, code == 0, code == 0 ? null : $"exit code {code}");
+            if (code == 0) recordMarker("ReservedStorage");
+        }
+
+        // ── POWERSHELL 2.0 ────────────────────────────────────────────────
+        private static void applyPowerShell2()
+        {
+            const string name = "Remove PowerShell 2.0";
+            try
+            {
+                var (code, outp, _) = proc.powerShell("(Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue).State");
+                string state = (outp ?? "").Trim();
+                if (code != 0 || state.Length == 0) { report(name + " (not present on this Windows build)"); return; }
+                if (state.Equals("Disabled", StringComparison.OrdinalIgnoreCase)) { report(name + " (already off)"); return; }
+
+                runPowerShell("'MicrosoftWindowsPowerShellV2','MicrosoftWindowsPowerShellV2Root' | ForEach-Object { " +
+                              "Disable-WindowsOptionalFeature -Online -FeatureName $_ -NoRestart -ErrorAction Stop | Out-Null }", name);
+                if (_results[^1].success) recordMarker("PowerShell2");
+            }
+            catch (Exception ex) { report(name, false, ex.Message); }
+        }
+
+        // ── FIREWALL ──────────────────────────────────────────────────────
+        // Only profiles that are currently off (or unconfigured) are touched, and each one's old state is kept for Undo.
+        private static void applyFirewall()
+        {
+            const string name = "Windows Firewall";
+            try
+            {
+                var (code, outp, _) = proc.powerShell("Get-NetFirewallProfile | ForEach-Object { $_.Name + '|' + $_.Enabled }");
+                var rows = (outp ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                       .Select(l => l.Split('|')).Where(a => a.Length == 2 && firewallProfiles.Contains(a[0])).ToList();
+                if (code != 0 || rows.Count == 0) { report(name, false, "Could not read the firewall profiles"); return; }
+
+                foreach (var (profile, state) in rows.Select(r => (r[0], r[1])))
+                {
+                    if (state.Equals("True", StringComparison.OrdinalIgnoreCase)) { report($"Firewall {profile} profile (already on)"); continue; }
+                    if (firewallStates.Contains(state)) addBackup(firewallKind, "FIREWALL", profile, "Enabled", state);
+                    runPowerShell($"Set-NetFirewallProfile -Profile {profile} -Enabled True -ErrorAction Stop", $"Enable firewall: {profile} profile");
+                }
+            }
+            catch (Exception ex) { report(name, false, ex.Message); }
+        }
+
+        // ── DNS (Cloudflare, for the DoH tweak) ───────────────────────────
+        private const string cloudflareDns = "1.1.1.1,1.0.0.1";
+
+        // Connected physical adapters only (VPN and virtual adapters keep their own DNS). Each adapter's
+        // old servers are saved; an empty entry means "was automatic (DHCP)" and Undo resets it to that.
+        private static void applyDnsServers()
+        {
+            const string name = "Set adapter DNS to Cloudflare";
+            try
+            {
+                var (code, outp, _) = proc.powerShell("Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { $_.Name + '|' + $_.InterfaceGuid }");
+                var rows = (outp ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                       .Select(l => l.Split('|')).Where(a => a.Length == 2 && !a[0].Contains('"')).ToList();
+                if (code != 0 || rows.Count == 0) { report(name, false, "No connected network adapter found"); return; }
+
+                foreach (var row in rows)
+                {
+                    string raw  = Registry.GetValue(svc + @"\Tcpip\Parameters\Interfaces\" + row[1], "NameServer", "") as string ?? "";
+                    string orig = string.Join(",", raw.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries));
+                    if (orig == cloudflareDns) { report($"DNS on {row[0]} (already Cloudflare)"); continue; }
+                    // 127.x / ::1 = a local resolver (WARP, DNSCrypt, a DoH proxy…) is managing DNS here — replacing it would bypass it
+                    if (orig.Split(',').Any(a => a.StartsWith("127.") || a == "::1")) { report($"DNS on {row[0]} (skipped — a local DNS proxy is in use)"); continue; }
+
+                    addBackup(dnsKind, "DNS", row[0], "NameServer", orig);
+                    runPowerShell($"Set-DnsClientServerAddress -InterfaceAlias '{row[0].Replace("'", "''")}' -ServerAddresses ('1.1.1.1','1.0.0.1') -ErrorAction Stop",
+                                  $"DNS on {row[0]} → Cloudflare");
+                }
+            }
+            catch (Exception ex) { report(name, false, ex.Message); }
+        }
+
+        // ── NETWORK ADAPTER LATENCY (desktop) ─────────────────────────────
+        // The mirror of Lap_NicPower: stops Windows powering the NIC down and, where the driver has the option,
+        // turns off Energy-Efficient / Green Ethernet. Written straight into the adapter's class key (driver
+        // properties live there as strings), so the normal registry backup covers Undo.
+        private static readonly string[] greenEthernetKeywords = { "*EEE", "EEE", "AdvancedEEE", "EnableGreenEthernet", "GreenEthernet" };
+
+        private static void applyNicLatency()
+        {
+            const string name = "Network adapter power saving";
+            try
+            {
+                var (code, outp, _) = proc.powerShell("Get-NetAdapter -Physical | ForEach-Object { $_.InterfaceGuid }");
+                var guids = (outp ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (code != 0 || guids.Count == 0) { report(name, false, "No physical network adapter found"); return; }
+
+                using var cls = Registry.LocalMachine.OpenSubKey(netClassKey);
+                int touched = 0;
+                foreach (string sub in cls?.GetSubKeyNames() ?? [])
+                {
+                    using var k = cls.OpenSubKey(sub);
+                    if (k?.GetValue("NetCfgInstanceId") is not string id || !guids.Contains(id)) continue;
+
+                    string path = $@"{lm}\{netClassKey}\{sub}", label = (k.GetValue("DriverDesc") as string) ?? sub;
+                    // 0x10 = "Allow the computer to turn off this device" unticked; the wake-related bits are left as they were
+                    dw(path, "PnPCapabilities", (k.GetValue("PnPCapabilities") is int caps ? caps : 0) | 0x10, $"{label}: don't power the adapter down");
+                    foreach (string kw in greenEthernetKeywords.Where(w => k.GetValue(w) != null))
+                        sz(path, kw, "0", $"{label}: {kw} off");
+                    touched++;
+                }
+                if (touched == 0) report(name, false, "No adapter driver key matched");
+            }
+            catch (Exception ex) { report(name, false, ex.Message); }
+        }
+
+        // ── OPTIMISATIONS FOR WINDOWED GAMES ──────────────────────────────
+        // DirectXUserGlobalSettings is a ';'-separated list shared with VRR / Auto HDR — merge, don't overwrite
+        private static void applyWindowedOptimisations()
+        {
+            string cur = Registry.GetValue(gpuPrefKey, "DirectXUserGlobalSettings", null) as string ?? "";
+            const string want = "SwapEffectUpgradeEnable=1;";
+            var rx = new Regex(@"SwapEffectUpgradeEnable=\d;?", RegexOptions.IgnoreCase);
+            string next = rx.IsMatch(cur) ? rx.Replace(cur, want) : cur + (cur.Length == 0 || cur.EndsWith(';') ? "" : ";") + want;
+            sz(gpuPrefKey, "DirectXUserGlobalSettings", next, "Optimizations for windowed games");
         }
 
         // ── HOSTS BLOCK LIST ──────────────────────────────────────────────
@@ -847,9 +1076,16 @@ namespace Win11Optimizer
             ["Bloat_PhoneLink"] = new[] { "*YourPhone*",  "*PhoneLink*" },
             ["Bloat_Clipchamp"] = new[] { "*Clipchamp*" },
             ["Bloat_Xbox"]      = new[] { "*Xbox.TCUI*",  "*XboxApp*", "*XboxGameOverlay*", "*XboxGamingOverlay*", "*XboxSpeechToTextOverlay*" },
-            ["Bloat_AdTiles"]   = new[] { "*LinkedIn*",   "*Disney*", "*Spotify*", "*TikTok*", "*Instagram*", "*Facebook*" },
+            ["Bloat_AdTiles"]   = new[] { "*LinkedIn*",   "*Disney*", "*Spotify*", "*TikTok*", "*Instagram*", "*Facebook*",
+                                          "*CandyCrush*", "*king.com*", "*Netflix*", "*PrimeVideo*", "*Duolingo*", "*Hulu*",
+                                          "*Pandora*",    "*Twitter*", "*AdobePhotoshopExpress*", "*AdobeExpress*" },
             ["Bloat_Office"]    = new[] { "*OfficeHub*",  "*OneNote*" },
             ["Bloat_3D"]        = new[] { "*3DViewer*",   "*Print3D*" },
+            ["Bloat_Copilot"]   = new[] { "*Microsoft.Copilot*", "*Windows.Ai.Copilot*" },
+            ["Bloat_Cortana"]   = new[] { "*549981C3F5F10*" },
+            ["Bloat_HelpApps"]  = new[] { "*GetHelp*", "*Getstarted*", "*WindowsFeedbackHub*" },
+            ["Bloat_Outlook"]   = new[] { "*OutlookForWindows*", "*windowscommunicationsapps*" },
+            ["Bloat_Misc"]      = new[] { "*MixedReality.Portal*", "*DevHome*", "*PowerAutomateDesktop*" },
         };
 
         private static void removeApps(string[] patterns)
@@ -946,7 +1182,7 @@ namespace Win11Optimizer
         // ── INDIVIDUAL TWEAKS (by tweakKey) ───────────────────────────────
         private static void applyTweak(string key)
         {
-            if (laptopPower.TryGetValue(key, out var parts))
+            if (powerTweaks.TryGetValue(key, out var parts))
             {
                 string headline = parts[0].label;
                 string scheme   = activeSchemeGuid();
@@ -967,7 +1203,7 @@ namespace Win11Optimizer
             switch (key)
             {
                 // ── PERFORMANCE ───────────────────────────────────────
-                case "Perf_PowerPlan":      runCommand("powercfg -setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", "High Performance power plan"); break;
+                case "Perf_PowerPlan":      applyPerformancePlan(); break;
                 case "Perf_PowerThrottle":  dw(ctl + @"\Power\PowerThrottling", "PowerThrottlingOff", 1, "Disable Power Throttling"); break;
                 case "Perf_SysMain":        disableService("SysMain"); break;
                 case "Perf_WSearch":        disableService("WSearch"); break;
@@ -985,6 +1221,8 @@ namespace Win11Optimizer
                     catch (Exception ex) { report("Set timer resolution", false, ex.Message); }
                     dw(ctl + @"\Session Manager\kernel", "GlobalTimerResolutionRequests", 1, "Persist high-res timer"); break;
                 case "Perf_Widgets":        dw(lmPol + @"\Dsh", "AllowNewsAndInterests", 0, "Disable Widgets board"); break;
+                case "Perf_FastStartup":    dw(ctl + @"\Session Manager\Power", "HiberbootEnabled", 0, "Disable Fast Startup"); break;
+                case "Perf_ReservedStorage": applyReservedStorage(); break;
 
                 // ── PRIVACY ───────────────────────────────────────────
                 case "Priv_Telemetry":
@@ -1043,6 +1281,47 @@ namespace Win11Optimizer
                 case "Priv_TailoredExp":
                     dw(cuCv + @"\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled", 0, "Disable tailored experiences");
                     dw(cuPol + @"\CloudContent", "DisableTailoredExperiencesWithDiagnosticData", 1, "Disable tailored experiences (policy)"); break;
+                case "Priv_AppCompatTelemetry":
+                    dw(appCompat, "AITEnable",        0, "Disable application-impact telemetry");
+                    dw(appCompat, "DisableInventory", 1, "Disable application inventory");
+                    dw(appCompat, "DisableUAR",       1, "Disable Steps Recorder");
+                    dw(lmPol + @"\SQMClient\Windows", "CEIPEnable", 0, "Disable Customer Experience Improvement Program"); break;
+                case "Priv_SearchCloud":
+                    dw(searchSettings, "IsAADCloudSearchEnabled",      0, "Disable work/school cloud search");
+                    dw(searchSettings, "IsMSACloudSearchEnabled",      0, "Disable Microsoft-account cloud search");
+                    dw(searchSettings, "IsDeviceSearchHistoryEnabled", 0, "Disable search history on this device"); break;
+                case "Priv_OnlineSpeech":
+                    dw(cuSw + @"\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted", 0, "Disable online speech recognition");
+                    dw(lmPol + @"\InputPersonalization", "AllowInputPersonalization", 0, "Disable online speech recognition (policy)"); break;
+                case "Priv_ClipboardSync":  dw(lmPol + @"\Windows\System", "AllowCrossDeviceClipboard", 0, "Disable clipboard sync across devices"); break;
+                case "Priv_EdgeTelemetry":
+                    foreach (var (v, f) in new[]
+                    {
+                        ("MetricsReportingEnabled",                       "Edge: stop usage and crash reporting"),
+                        ("PersonalizationReportingEnabled",               "Edge: stop personalised ads/news data"),
+                        ("ShowRecommendationsEnabled",                    "Edge: no recommendations"),
+                        ("SpotlightExperiencesAndRecommendationsEnabled", "Edge: no spotlight experiences"),
+                        ("HubsSidebarEnabled",                            "Edge: hide the sidebar"),
+                        ("EdgeShoppingAssistantEnabled",                  "Edge: disable shopping assistant"),
+                        ("UserFeedbackAllowed",                           "Edge: disable feedback prompts"),
+                    })
+                        dw(edgePolicy, v, 0, f);
+                    break;
+                case "Priv_AppDiagInfo":
+                    foreach (var (v, f) in new[]
+                    {
+                        ("LetAppsGetDiagnosticInfo",    "Block app access to other apps' diagnostics"),
+                        ("LetAppsAccessCallHistory",    "Block app access to call history"),
+                        ("LetAppsAccessTasks",          "Block app access to tasks"),
+                        ("LetAppsAccessTrustedDevices", "Block app access to trusted devices"),
+                    })
+                        dw(appPrivacy, v, 2, f);
+                    break;
+                case "Priv_RecentFiles":
+                    dw(cuCv + @"\Explorer", "ShowRecent",   0, "Hide recent files in Quick Access");
+                    dw(cuCv + @"\Explorer", "ShowFrequent", 0, "Hide frequent folders in Quick Access");
+                    dw(explorerAdvanced, "Start_TrackDocs", 0, "Stop tracking opened documents"); break;
+                case "Priv_OneDrive":       dw(lmPol + @"\Windows\OneDrive", "DisableFileSyncNGSC", 1, "Disable OneDrive file sync"); break;
                 case "Priv_InkTyping":
                     dw(cuSw + @"\InputPersonalization", "RestrictImplicitInkCollection",  1, "Stop inking data collection");
                     dw(cuSw + @"\InputPersonalization", "RestrictImplicitTextCollection", 1, "Stop typing data collection");
@@ -1065,6 +1344,15 @@ namespace Win11Optimizer
                     foreach (var id in new[] { "338389", "338393", "353694", "353696" })
                         dw(contentDelivery, $"SubscribedContent-{id}Enabled", 0, $"Disable suggested content ({id})");
                     dw(explorerAdvanced, "Start_IrisRecommendations", 0, "Disable Start menu recommendations"); break;
+                case "Resp_NagScreens":
+                    dw(cuCv + @"\UserProfileEngagement", "ScoobeSystemSettingEnabled", 0, "Disable 'finish setting up your device' nag");
+                    dw(explorerAdvanced, "ShowSyncProviderNotifications", 0, "Disable File Explorer sync-provider ads");
+                    dw(explorerAdvanced, "Start_AccountNotifications",    0, "Disable Start account notifications"); break;
+                case "Resp_NoForcedRestart": dw(lmPol + @"\Windows\WindowsUpdate\AU", "NoAutoRebootWithLoggedOnUsers", 1, "No automatic restart while signed in"); break;
+                case "Resp_ThisPC":         dw(explorerAdvanced, "LaunchTo", 1, "File Explorer opens to This PC"); break;
+                case "Resp_TaskbarClean":
+                    dw(cuCv + @"\Search", "SearchboxTaskbarMode", 0, "Hide taskbar search box");
+                    dw(explorerAdvanced, "ShowTaskViewButton", 0, "Hide Task View button"); break;
                 case "Resp_ClassicContext": sz(classicMenuKey, "", "", "Classic right-click menu"); break;
                 case "Resp_EndTask":        dw(explorerAdvanced + @"\TaskbarDeveloperSettings", "TaskbarEndTask", 1, "Add End Task to taskbar menu"); break;
 
@@ -1080,15 +1368,21 @@ namespace Win11Optimizer
                 case "Game_CPUPriority":    dw(ctl + @"\PriorityControl", "Win32PrioritySeparation", 38, "CPU foreground priority boost"); break;
                 case "Game_DVR":
                     dw(cuCv + @"\GameDVR", "AppCaptureEnabled", 0, "Disable Game DVR capture");
-                    dw(lmPol + @"\Windows\GameDVR", "AllowGameDVR", 0, "Disable Game DVR (policy)"); break;
+                    dw(lmPol + @"\Windows\GameDVR", "AllowGameDVR", 0, "Disable Game DVR (policy)");
+                    // Without these, the controller's Guide button still pops the 'ms-gamingoverlay' prompt once the Xbox apps are gone
+                    dw(cu + @"\System\GameConfigStore", "GameDVR_Enabled", 0, "Disable Game DVR (GameConfigStore)");
+                    dw(cuSw + @"\GameBar", "UseNexusForGameBarEnabled", 0, "Disable Game Bar controller shortcut");
+                    dw(cuSw + @"\GameBar", "ShowStartupPanel",          0, "Disable Game Bar startup panel"); break;
                 case "Game_FSO":
                     dw(cu + @"\System\GameConfigStore", "GameDVR_FSEBehaviorMode",          2, "Disable FSO globally");
                     dw(cu + @"\System\GameConfigStore", "GameDVR_HonorUserFSEBehaviorMode", 1, "Honor FSO setting"); break;
                 case "Game_GPUPower":
                     dw(gpuClassKey, "PerfLevelSrc", 0x3322, "GPU: Prefer Maximum Performance");
-                    // ⚠️ VIDEOIDLE is "turn off display after" — 0 = never on AC, and it isn't backed up for Undo
-                    runCommand("powercfg -setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0 & powercfg -setactive SCHEME_CURRENT",
-                        "GPU power: prevent idle"); break;
+                    // "Turn off display after" = never while plugged in. Backed up, so Undo gives the old timeout back
+                    if (activeSchemeGuid() is string scheme) applyPowerPart(displayNeverOffAc, scheme);
+                    else report("GPU power: keep display awake", false, "Could not read active power scheme");
+                    break;
+                case "Game_WindowedOpt":    applyWindowedOptimisations(); break;
                 case "Game_NvidiaTelemetry":
                     foreach (var s in nvidiaServices) disableService(s);
                     foreach (var t in nvidiaTasks) setTask(t, false); break;
@@ -1133,7 +1427,11 @@ namespace Win11Optimizer
                         dw(k, "DohFlags", 3, "Register " + ip);
                         sz(k, "DohTemplate", "https://cloudflare-dns.com/dns-query", label);
                     }
+                    // The templates above only apply to servers they're registered for, so point the adapters at them too
+                    applyDnsServers();
+                    runCommand("ipconfig /flushdns", "Flush DNS cache");
                     break;
+                case "Net_NicPower":        applyNicLatency(); break;
                 case "Net_DeliveryOpt":     dw(lmPol + @"\Windows\DeliveryOptimization", "DODownloadMode", 0, "Delivery Optimization: HTTP only (no P2P)"); break;
 
                 // ── SECURITY ──────────────────────────────────────────
@@ -1151,6 +1449,20 @@ namespace Win11Optimizer
                 case "Sec_NetBIOS":
                     runPowerShell("Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.TcpipNetbiosOptions -ne $null } | ForEach-Object { $_.SetTcpipNetbios(2) }",
                         "Disable NetBIOS over TCP/IP"); break;
+                case "Sec_LLMNR":           dw(lmPol + @"\Windows NT\DNSClient", "EnableMulticast", 0, "Disable LLMNR"); break;
+                case "Sec_Firewall":        applyFirewall(); break;
+                case "Sec_DefenderPUA":
+                    dw(defenderPolicy, "PUAProtection", 1, "Defender: block potentially unwanted apps");
+                    dw(defenderPolicy + @"\Windows Defender Exploit Guard\Network Protection", "EnableNetworkProtection", 1, "Defender: Network Protection on"); break;
+                case "Sec_PS2":             applyPowerShell2(); break;
+                case "Sec_RemoteAssist":
+                    dw(ctl + @"\Remote Assistance", "fAllowToGetHelp",   0, "Disable Remote Assistance invitations");
+                    dw(ctl + @"\Remote Assistance", "fAllowFullControl", 0, "Disable Remote Assistance full control"); break;
+                case "Sec_ShowExt":         dw(explorerAdvanced, "HideFileExt", 0, "Show file extensions"); break;
+                case "Sec_Teredo":
+                    foreach (var t in new[] { "Teredo_State", "6to4_State", "ISATAP_State" })
+                        sz(transitionPolicy, t, "Disabled", "Disable IPv6 transition: " + t.Split('_')[0]);
+                    break;
                 case "Sec_Defender":
                     dw(lmPol + @"\Windows Defender", "DisableAntiSpyware", 0, "Ensure Defender not disabled");
                     dw(lmPol + @"\Windows Defender\Real-Time Protection", "DisableRealtimeMonitoring", 0, "Ensure Defender real-time ON");
@@ -1171,6 +1483,11 @@ namespace Win11Optimizer
                 case "Adv_BoostMode":
                     // Only unhides the setting (Attributes=2) — doesn't set a boost value; backed up and undoable
                     dw(boostModeKey, "Attributes", 2, "Unhide Processor Performance Boost Mode"); break;
+
+                case "Adv_VbsOff":
+                    dw(deviceGuard, "EnableVirtualizationBasedSecurity", 0, "Turn off virtualization-based security");
+                    dw(deviceGuard + @"\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled", 0, "Turn off Memory Integrity (HVCI)"); break;
+                case "Adv_Mpo":             dw(dwmKey, "OverlayTestMode", 5, "Disable Multiplane Overlay"); break;
 
                 // ── LAPTOP (registry-based; power-plan ones handled above) ─
                 case "Lap_IndexOnBattery":  dw(lmPol + @"\Windows\Windows Search", "PreventIndexOnBattery", 1, "Pause search indexing on battery"); break;

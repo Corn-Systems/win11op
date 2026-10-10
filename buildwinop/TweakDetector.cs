@@ -74,9 +74,9 @@ namespace Win11Optimizer
             foreach (var p in parts)
             {
                 var info = queryPower(p.sub, p.setting);
-                if (info?.dc is not int dc || powerTarget(p, info) is not int target) continue;
+                if (info == null || p.now(info) is not int cur || powerTarget(p, info) is not int target) continue;
                 any = true;
-                if (!p.satisfied(dc, target)) return false;
+                if (!p.satisfied(cur, target)) return false;
             }
             return any ? true : null;
         }
@@ -88,18 +88,18 @@ namespace Win11Optimizer
             return apps.Count == 0 ? null : apps.All(a => sz(gpuPrefKey, a) == "GpuPreference=1;");
         }
 
-        // One line for the tooltip: what the battery-side settings are right now, and what the tweak would change them to
+        // One line for the tooltip: what the plan's settings are right now, and what the tweak would change them to
         public static string currentSummary(string key)
         {
-            if (!laptopPower.TryGetValue(key, out var parts)) return null;
+            if (!powerTweaks.TryGetValue(key, out var parts)) return null;
             var bits = new System.Collections.Generic.List<string>();
             foreach (var p in parts)
             {
                 var info = queryPower(p.sub, p.setting);
-                if (info?.dc is not int dc || powerTarget(p, info) is not int target) continue;
-                bits.Add(p.satisfied(dc, target)
-                    ? $"{p.shortName} {p.show(info, dc)} ✔"
-                    : $"{p.shortName} {p.show(info, dc)} → {p.show(info, target)}");
+                if (info == null || p.now(info) is not int cur || powerTarget(p, info) is not int target) continue;
+                bits.Add(p.satisfied(cur, target)
+                    ? $"{p.shortName} {p.show(info, cur)} ✔"
+                    : $"{p.shortName} {p.show(info, cur)} → {p.show(info, target)}");
             }
             return bits.Count == 0 ? null : string.Join("  ·  ", bits);
         }
@@ -114,8 +114,8 @@ namespace Win11Optimizer
         public static bool? check(string key)
         {
             if (key == null) return null;
-            // Laptop power-plan tweaks: every readable part of the active plan's battery (DC) values must be satisfied
-            if (laptopPower.TryGetValue(key, out var parts))
+            // Power-plan tweaks: every readable part of the active plan (battery side, or plugged-in for Game_AcLatency) must be satisfied
+            if (powerTweaks.TryGetValue(key, out var parts))
             {
                 bool? power = powerApplied(parts);
                 if (key != "Lap_GpuPowerSaving") return power;
@@ -127,8 +127,9 @@ namespace Win11Optimizer
                 return key switch
                 {
                     // ── PERFORMANCE ───────────────────────────────────────────
-                    "Perf_PowerPlan"        => sz(ctl + @"\Power\User\PowerSchemes", "ActivePowerScheme")
-                                                   ?.Equals("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", StringComparison.OrdinalIgnoreCase),
+                    "Perf_PowerPlan"        => sz(ctl + @"\Power\User\PowerSchemes", "ActivePowerScheme") is { } plan
+                                                   ? plan.Equals(powerPlanUltimate, StringComparison.OrdinalIgnoreCase) || plan.Equals(powerPlanHigh, StringComparison.OrdinalIgnoreCase)
+                                                   : null,
                     "Perf_PowerThrottle"    => dw(ctl + @"\Power\PowerThrottling", "PowerThrottlingOff") == 1,
                     "Perf_SysMain"          => serviceDisabled("SysMain"),
                     "Perf_WSearch"          => serviceDisabled("WSearch"),
@@ -140,6 +141,8 @@ namespace Win11Optimizer
                     "Perf_Hibernate"        => hibernationEnabled() == false,
                     "Perf_TimerRes"         => dw(ctl + @"\Session Manager\kernel", "GlobalTimerResolutionRequests") == 1,
                     "Perf_Widgets"          => dw(lmPol + @"\Dsh", "AllowNewsAndInterests") == 0,
+                    "Perf_FastStartup"      => dw(ctl + @"\Session Manager\Power", "HiberbootEnabled") == 0,
+                    "Perf_ReservedStorage"  => dw(reserveManager, "ShippedWithReserves") == 0,
 
                     // ── PRIVACY ───────────────────────────────────────────────
                     "Priv_Telemetry"        => dw(lmPol + @"\Windows\DataCollection", "AllowTelemetry") == 0,
@@ -161,6 +164,14 @@ namespace Win11Optimizer
                     "Priv_CloudContent"     => dw(lmPol + @"\Windows\CloudContent", "DisableWindowsConsumerFeatures") == 1,
                     "Priv_TailoredExp"      => dw(cuCv + @"\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled") == 0,
                     "Priv_InkTyping"        => dw(cuSw + @"\InputPersonalization", "RestrictImplicitTextCollection") == 1,
+                    "Priv_AppCompatTelemetry" => dw(appCompat, "DisableInventory") == 1,
+                    "Priv_SearchCloud"      => dw(searchSettings, "IsMSACloudSearchEnabled") == 0 && dw(searchSettings, "IsAADCloudSearchEnabled") == 0,
+                    "Priv_OnlineSpeech"     => dw(cuSw + @"\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted") == 0,
+                    "Priv_ClipboardSync"    => dw(lmPol + @"\Windows\System", "AllowCrossDeviceClipboard") == 0,
+                    "Priv_EdgeTelemetry"    => dw(edgePolicy, "MetricsReportingEnabled") == 0 && dw(edgePolicy, "PersonalizationReportingEnabled") == 0,
+                    "Priv_AppDiagInfo"      => dw(appPrivacy, "LetAppsGetDiagnosticInfo") == 2,
+                    "Priv_RecentFiles"      => dw(cuCv + @"\Explorer", "ShowRecent") == 0,
+                    "Priv_OneDrive"         => dw(lmPol + @"\Windows\OneDrive", "DisableFileSyncNGSC") == 1,
 
                     // ── RESPONSIVENESS ────────────────────────────────────────
                     "Resp_MenuDelay"        => sz(desktop, "MenuShowDelay") == "0",
@@ -172,6 +183,10 @@ namespace Win11Optimizer
                     "Resp_SuggestedContent" => dw(contentDelivery, "SubscribedContent-338393Enabled") == 0,
                     "Resp_ClassicContext"   => sz(classicMenuKey, "") == "",
                     "Resp_EndTask"          => dw(explorerAdvanced + @"\TaskbarDeveloperSettings", "TaskbarEndTask") == 1,
+                    "Resp_NagScreens"       => dw(cuCv + @"\UserProfileEngagement", "ScoobeSystemSettingEnabled") == 0,
+                    "Resp_NoForcedRestart"  => dw(lmPol + @"\Windows\WindowsUpdate\AU", "NoAutoRebootWithLoggedOnUsers") == 1,
+                    "Resp_ThisPC"           => dw(explorerAdvanced, "LaunchTo") == 1,
+                    "Resp_TaskbarClean"     => dw(cuCv + @"\Search", "SearchboxTaskbarMode") == 0 && dw(explorerAdvanced, "ShowTaskViewButton") == 0,
 
                     // ── GAMING ────────────────────────────────────────────────
                     "Game_HAGS"             => dw(ctl + @"\GraphicsDrivers", "HwSchMode") == 2,
@@ -183,6 +198,7 @@ namespace Win11Optimizer
                     "Game_GPUPower"         => dw(gpuClassKey, "PerfLevelSrc") == 0x3322,
                     "Game_NvidiaTelemetry"  => serviceDisabled("NvTelemetryContainer"),
                     "Game_StickyKeys"       => sz(cuPanel + @"\Accessibility\StickyKeys", "Flags") == "506",
+                    "Game_WindowedOpt"      => sz(gpuPrefKey, "DirectXUserGlobalSettings")?.Contains("SwapEffectUpgradeEnable=1", StringComparison.OrdinalIgnoreCase) == true,
 
                     // ── NETWORK ───────────────────────────────────────────────
                     "Net_Nagle"             => nagleDisabled(),
@@ -195,6 +211,12 @@ namespace Win11Optimizer
                     "Sec_AutoRun"           => dw(lmCv + @"\Policies\Explorer", "NoDriveTypeAutoRun") == 0xFF,
                     "Sec_RDP"               => dw(ctl + @"\Terminal Server", "fDenyTSConnections") == 1,
                     "Sec_Defender"          => dw(lmPol + @"\Windows Defender", "DisableAntiSpyware") == 0,
+                    "Sec_LLMNR"             => dw(lmPol + @"\Windows NT\DNSClient", "EnableMulticast") == 0,
+                    "Sec_Firewall"          => new[] { "DomainProfile", "StandardProfile", "PublicProfile" }.All(p => dw(firewallPolicy + @"\" + p, "EnableFirewall") == 1),
+                    "Sec_DefenderPUA"       => dw(defenderPolicy, "PUAProtection") == 1,
+                    "Sec_RemoteAssist"      => dw(ctl + @"\Remote Assistance", "fAllowToGetHelp") == 0,
+                    "Sec_ShowExt"           => dw(explorerAdvanced, "HideFileExt") == 0,
+                    "Sec_Teredo"            => sz(transitionPolicy, "Teredo_State") == "Disabled",
 
                     // ── ADVANCED ──────────────────────────────────────────────
                     "Adv_ProcessorScheduling" => dw(ctl + @"\PriorityControl", "Win32PrioritySeparation") == 38,
@@ -202,6 +224,8 @@ namespace Win11Optimizer
                     "Adv_IrqAffinity"       => allGpus(affinitySub, "DevicePolicy", 5),
                     "Adv_BoostMode"         => dw(boostModeKey, "Attributes") == 2,
                     "Adv_Animations"        => dw(explorerAdvanced, "TaskbarAnimations") == 0,
+                    "Adv_VbsOff"            => dw(deviceGuard, "EnableVirtualizationBasedSecurity") == 0 && dw(deviceGuard + @"\Scenarios\HypervisorEnforcedCodeIntegrity", "Enabled") == 0,
+                    "Adv_Mpo"               => dw(dwmKey, "OverlayTestMode") == 5,
 
                     // ── LAPTOP (registry-based; power-plan ones handled above) ─
                     "Lap_IndexOnBattery"    => dw(lmPol + @"\Windows\Windows Search", "PreventIndexOnBattery") == 1,

@@ -532,12 +532,14 @@ namespace Win11Optimizer
             bool hasBattery = hardware.hasBattery;
 
             // Recommended + privacy/responsiveness/security + the Laptop tweaks up to a tier, minus
-            // anything that trades battery for speed (or breaks hibernate-on-critical).
+            // anything that trades battery for speed (or breaks hibernate-on-critical), and minus
+            // cosmetic or security-trading tiles that have nothing to do with battery life.
             bool laptopPick(tweakEntry e, int maxTier) =>
                 (e.defaultOn || e.category is "Privacy" or "Responsiveness" or "Security" or "Laptop")
                 && e.tweakKey is not ("Perf_PowerPlan" or "Perf_Hibernate" or "Perf_MemCompression" or
                     "Perf_PowerThrottle" or "Perf_TimerRes" or "Resp_PlatformTick" or "Resp_VerboseStatus" or
-                    "Adv_DynamicTick" or "Game_GPUPower" or "Game_HAGS")
+                    "Adv_DynamicTick" or "Game_GPUPower" or "Game_HAGS" or
+                    "Priv_SmartScreen" or "Priv_OneDrive" or "Resp_ThisPC" or "Resp_TaskbarClean" or "Sec_ShowExt")
                 && (e.category != "Laptop" || laptopTiers.of(e.tweakKey) is > 0 && laptopTiers.of(e.tweakKey) <= maxTier);
 
             string noBattery = "Laptop — note: no battery detected, the battery-only settings won't do anything on this PC";
@@ -545,11 +547,15 @@ namespace Win11Optimizer
             {
                 "Recommended" => (e => e.defaultOn,
                     "Recommended (safe defaults)", theme.accent),
-                "Gaming" => (e => e.defaultOn || e.category is "Gaming" or "Network",
+                // Net_DoH swaps your DNS provider — nothing to do with gaming. Fast Startup off gives a true cold boot
+                "Gaming" => (e => (e.defaultOn || e.category is "Gaming" or "Network" || e.tweakKey == "Perf_FastStartup")
+                                  && e.tweakKey != "Net_DoH",
                     "Gaming PC (recommended + gaming + network)", theme.success),
-                "Privacy" => (e => e.defaultOn || e.category == "Privacy",
+                // OneDrive sync is a workflow decision, not a privacy default — it's Clean Install / Nuclear only
+                "Privacy" => (e => (e.defaultOn || e.category == "Privacy") && e.tweakKey != "Priv_OneDrive",
                     "Privacy (recommended + all privacy tweaks)", Color.FromArgb(168, 85, 247)),
-                "Security" => (e => e.defaultOn || e.category == "Security",
+                // A Security preset must not weaken security: no SmartScreen-off, and no hosts-file block (Defender flags it as a hijack)
+                "Security" => (e => (e.defaultOn || e.category == "Security") && e.tweakKey is not ("Priv_SmartScreen" or "Priv_HostsBlock"),
                     "Security (recommended + all security tweaks)", Color.FromArgb(16, 185, 129)),
                 // Everything except Bloatware (irreversible), Advanced (risky) and Laptop (use the Laptop preset)
                 "Nuclear" => (e => e.category is not ("Bloatware" or "Advanced" or "Laptop"),
@@ -560,7 +566,8 @@ namespace Win11Optimizer
                         "Resp_AutoEndTasks" or "Resp_WinTips" or "Resp_SuggestedContent" or
                         "Priv_AdvertisingId" or "Priv_BingStart" or "Priv_ChatIcon" or
                         "Priv_Feedback" or "Priv_AppTracking" or "Priv_Recall" or
-                        "Perf_StartupDelay" or "Perf_VisualFX" or "Priv_CloudContent",
+                        "Perf_StartupDelay" or "Perf_VisualFX" or "Priv_CloudContent" or
+                        "Resp_NagScreens" or "Priv_SearchCloud",
                     "Minimal — safe UI & privacy tweaks only", theme.textSec),
                 // Light: only the near-invisible battery tweaks — no privacy/responsiveness extras
                 "LaptopLight" => (e => e.category == "Laptop" && laptopTiers.of(e.tweakKey) is > 0 and <= 1,
@@ -573,16 +580,23 @@ namespace Win11Optimizer
                 "LaptopMax" => (e => laptopPick(e, 3),
                     hasBattery ? "Laptop Max battery — everything in Balanced, plus dimmer screen, passive cooling & no background Store apps" : noBattery,
                     hasBattery ? Color.FromArgb(14, 165, 233) : theme.warning),
-                "CleanInstall" => (e => e.category is "Bloatware" or "Privacy"
+                "CleanInstall" => (e => (e.category is "Bloatware" or "Privacy"
                         || e.tweakKey is "Sec_Defender" or "Sec_NetBIOS" or "Sec_RDP"
-                                      or "Resp_WinTips" or "Resp_SuggestedContent" or "Perf_StartupDelay",
+                                      or "Resp_WinTips" or "Resp_SuggestedContent" or "Perf_StartupDelay"
+                                      or "Resp_NagScreens" or "Resp_NoForcedRestart" or "Resp_ThisPC" or "Resp_TaskbarClean"
+                                      or "Perf_ReservedStorage" or "Sec_ShowExt" or "Sec_LLMNR" or "Sec_Firewall"
+                                      or "Sec_DefenderPUA" or "Sec_PS2" or "Sec_RemoteAssist")
+                        && e.tweakKey != "Priv_SmartScreen",
                     "Clean Install — bloatware removed, telemetry killed, baseline secured", Color.FromArgb(52, 211, 153)),
                 "DevMachine" => (e => (e.category is "Performance" or "Responsiveness" or "Network"
                         || e.tweakKey is "Adv_ProcessorScheduling" or "Adv_CPUThrottle" or "Adv_DynamicTick" or "Adv_TRIM"
                                       or "Adv_Animations" or "Priv_Telemetry" or "Priv_TelemetryTasks" or "Priv_DiagTrack"
-                                      or "Priv_Feedback" or "Priv_WER" or "Game_CPUPriority")
+                                      or "Priv_Feedback" or "Priv_WER" or "Game_CPUPriority"
+                                      or "Priv_AppCompatTelemetry" or "Sec_ShowExt")
+                        // Net_DoH would swap the DNS provider (breaks VPN / split-DNS); ReservedStorage matters when a dev disk fills
                         && e.tweakKey is not ("Perf_WSearch" or "Perf_Hibernate" or "Game_DVR" or "Game_HAGS"
-                                              or "Game_FSO" or "Game_GameMode" or "Game_NvidiaTelemetry"),
+                                              or "Game_FSO" or "Game_GameMode" or "Game_NvidiaTelemetry"
+                                              or "Net_DoH" or "Perf_ReservedStorage" or "Resp_TaskbarClean"),
                     "Dev Machine — max performance, keeps Search & Hibernate", Color.FromArgb(167, 139, 250)),
                 _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown preset")
             };
@@ -953,9 +967,10 @@ namespace Win11Optimizer
             _ttWhat.Text = split < 0 ? raw : raw[..split].Trim() + "\n\n" + raw[(split + 1)..].Trim();
 
             if (tile.unavailableReason != null) _ttWhat.Text += "\n\n⛔ Not available here: " + tile.unavailableReason;
-            else if (tweakEngine.laptopPower.ContainsKey(tile.entry.tweakKey))
+            else if (tweakEngine.powerTweaks.ContainsKey(tile.entry.tweakKey))
             {
-                if (_nowCache.TryGetValue(tile.entry.tweakKey, out string now)) { if (now.Length > 0) _ttWhat.Text += "\n\nNow (battery): " + now; }
+                string side = tile.entry.tweakKey.StartsWith("Lap_", StringComparison.Ordinal) ? "battery" : "plugged in";
+                if (_nowCache.TryGetValue(tile.entry.tweakKey, out string now)) { if (now.Length > 0) _ttWhat.Text += $"\n\nNow ({side}): " + now; }
                 else loadCurrentValueAsync(tile.entry.tweakKey);
             }
             using (var g = _ttWhat.CreateGraphics())

@@ -80,7 +80,7 @@ namespace Win11Optimizer
         // Tweaks that only act on the battery side of the power plan (or on battery-only behaviour)
         private static bool batteryOnly(string key) =>
             key is "Lap_IndexOnBattery" or "Lap_NicPower" ||
-            (tweakEngine.laptopPower.ContainsKey(key) && key != "Lap_GpuPowerSaving");   // that one also has a per-app half that works on AC
+            (tweakEngine.powerTweaks.ContainsKey(key) && key != "Lap_GpuPowerSaving");   // that one also has a per-app half that works on AC
 
         // Hardware check for one tweak key. Non-Laptop keys are always available.
         public static (avail state, string reason) check(string key)

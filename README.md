@@ -62,6 +62,17 @@ One-click presets to quickly select tweaks for common configurations:
 
 | Preset | Description |
 |--------|-------------|
+| ⭐ Recommended | Safe default-on tweaks only. Disabling SmartScreen, blocking app camera access and blocking location are **no longer** default-on — they're opt-in |
+| 🎮 Gaming PC | Recommended + all Gaming + all Network tweaks + Fast Startup off. Leaves out DNS-over-HTTPS (it changes your DNS provider, which has nothing to do with gaming) |
+| 🔒 Privacy | Recommended + every Privacy tweak, except OneDrive sync (a workflow decision, not a privacy default) |
+| 🛡 Security | Recommended + every Security tweak. Never includes *Disable SmartScreen* or the telemetry hosts block — a security preset shouldn't weaken Windows or trip Defender |
+| 🪶 Minimal | Conservative subset: menu/shutdown timings, tips and suggestions, nag screens, advertising ID, Bing and cloud search, and a few more |
+| 💻 Laptop ▾ | Opens a tier menu — **Light** (invisible battery tweaks only), **Balanced** (Recommended + Privacy/Responsiveness/Security + the everyday battery set, excludes tweaks that cost battery), or **Max battery** (Balanced + dimmer screen, passive cooling, no background Store apps). Cosmetic and security-trading tweaks (SmartScreen off, OneDrive off, taskbar/Explorer layout, file extensions) are never part of it |
+| 🧹 Clean Install | Bloatware + Privacy + a security baseline (Defender, NetBIOS, LLMNR, RDP, Remote Assistance, firewall, PUA protection, PowerShell 2.0, file extensions) + tidy-up (nag screens, no forced restarts, Explorer opens to This PC, clean taskbar, Reserved Storage). Never includes *Disable SmartScreen* |
+| 🔬 Dev Machine | Performance + Responsiveness + Network + advanced CPU tweaks, keeps Search and Hibernate. Leaves out DNS-over-HTTPS (breaks VPN / split-DNS), Reserved Storage and the taskbar cleanup |
+| ☢ Nuclear | Everything except Bloatware, Advanced & Laptop |
+
+--------|-------------|
 | ⭐ Recommended | Safe default-on tweaks only |
 | 🎮 Gaming PC | Recommended + Gaming + Network |
 | 🔒 Privacy | Recommended + all Privacy tweaks |
@@ -79,7 +90,7 @@ One-click presets to quickly select tweaks for common configurations:
 ### ⚡ Performance
 | Tweak | What It Does |
 |-------|-------------|
-| High Performance Power Plan | Switches to the maximum performance power plan |
+| Maximum Performance Power Plan | Activates the Ultimate Performance plan (High Performance where Windows doesn't offer it) |
 | Disable Power Throttling | Prevents Windows throttling background CPU usage |
 | Disable SysMain (Superfetch) | Stops RAM preloading — negligible benefit on SSDs |
 | Disable Windows Search Indexer | Removes background disk I/O from search indexing |
@@ -91,6 +102,8 @@ One-click presets to quickly select tweaks for common configurations:
 | Disable Memory Compression | Reduces CPU overhead; also disables page combining |
 | Global 1ms Timer Resolution | Lets 1ms timer requests apply system-wide again (Win11 22H2+) |
 | Disable Widgets Board | Removes Widgets and its background WebView processes |
+| Disable Fast Startup | Makes *Shut down* a real cold boot — clears stale driver and device state. Off by default |
+| Disable Reserved Storage | Gives back the ~7 GB Windows keeps in reserve for updates. Off by default; takes effect after a restart |
 
 ### 🔒 Privacy & Telemetry
 | Tweak | What It Does |
@@ -115,6 +128,16 @@ One-click presets to quickly select tweaks for common configurations:
 | Block Telemetry Hosts | Adds 35 Microsoft telemetry domains to the hosts file (`0.0.0.0`) |
 | Disable Tailored Experiences | Stops diagnostic data being used for personalised tips & ads |
 | Disable Inking & Typing Data Collection | Stops Windows harvesting typed/inked text for a personal dictionary |
+| Disable App-Compat Telemetry & Steps Recorder | Application inventory, Steps Recorder and CEIP policy switches |
+| Disable Cloud Search & Search History | Search stops querying your Microsoft/work account and remembering searches |
+| Disable Online Speech Recognition | Keeps voice clips off Microsoft's servers (breaks cloud voice typing, Win+H) |
+| Disable Clipboard Sync | Stops the clipboard syncing across devices; Win+V history stays local |
+| Disable Edge Telemetry & Recommendations | Edge usage reporting, shopping assistant, sidebar, recommendations (Edge will say it's "managed by your organization") |
+| Block App Diagnostics & Call History Access | Store apps can't read other apps' diagnostics, call history or tasks |
+| Hide Recent Files & Frequent Folders | Quick Access and Start stop listing what you opened |
+| Disable OneDrive File Sync | Stops syncing and hides OneDrive; files already on disk stay put. Off by default |
+
+> **Off by default:** *Disable SmartScreen*, *Block App Camera Access* and *Disable Location Tracking* are no longer part of Recommended — they trade security or functionality (Store camera/location apps) for privacy, so they're opt-in. They're still included in the Privacy preset (SmartScreen only in Privacy and Nuclear).
 
 ### 🖥 Responsiveness
 | Tweak | What It Does |
@@ -129,6 +152,10 @@ One-click presets to quickly select tweaks for common configurations:
 | Classic Right-Click Menu | Restores the full Windows 10 context menu — no more "Show more options" |
 | Add 'End Task' to Taskbar | Right-click a taskbar app → End task (Win11 23H2+) |
 | Verbose Boot/Shutdown Status | Shows real service names during boot/shutdown instead of a spinner |
+| Disable Nag Screens & Explorer Ads | No "finish setting up your device" prompts, sync-provider ads in Explorer, or Start account notifications |
+| No Automatic Restart While Signed In | Updates install, but Windows won't reboot you while you're working |
+| File Explorer Opens to This PC | Starts in your drives instead of Quick Access |
+| Clean Taskbar (No Search Box / Task View) | Hides the taskbar search box and Task View button |
 
 ### 🎮 Gaming
 | Tweak | What It Does |
@@ -137,11 +164,13 @@ One-click presets to quickly select tweaks for common configurations:
 | Enable Game Mode | Tells Windows to prioritize foreground game processes |
 | Disable Mouse Acceleration | Removes pointer precision for 1:1 raw mouse input |
 | CPU Foreground Priority Boost | Increases CPU time slice for the active window/game |
-| Disable Game DVR / Capture | Turns off Xbox Game Bar background recording |
+| Disable Game DVR / Capture | Turns off Xbox Game Bar background recording, the controller shortcut and the startup panel (also stops the `ms-gamingoverlay` pop-up after removing the Xbox apps) |
 | Disable Fullscreen Optimisations | Forces exclusive fullscreen for lower input latency |
-| GPU Power: Prefer Maximum Performance | Sets D3D power policy to never downclock the GPU |
+| GPU Power: Prefer Maximum Performance | Sets D3D power policy to never downclock the GPU; also keeps the display on while plugged in (the old timeout is saved and restored by Undo) |
 | Disable NVIDIA Telemetry Services | Stops NvTelemetryContainer & NvDisplayContainerLS |
 | Disable Sticky / Filter Keys Hotkeys | Stops the 5×Shift popup interrupting games |
+| Optimizations for Windowed Games | Borderless/windowed games present with the lower-latency flip model |
+| Desktop Latency Power Settings (Plugged In) | USB selective suspend and PCIe link power management off while plugged in — battery untouched |
 
 ### 🌐 Network
 | Tweak | What It Does |
@@ -153,11 +182,12 @@ One-click presets to quickly select tweaks for common configurations:
 | Max Multimedia Responsiveness | `SystemResponsiveness = 0` + tunes MMCSS Games & Pro Audio task priorities |
 | Disable Large Send Offload (LSO) | Disables LSO v2 on all physical adapters — reduces NIC-driver jitter |
 | Reduce TCP TIME_WAIT Delay | Cuts TIME_WAIT hold from 240s to 30s — frees ports faster |
-| DNS over HTTPS (Cloudflare 1.1.1.1) | Enables DoH via Windows DNS Client, routes queries encrypted |
+| DNS over HTTPS (Cloudflare 1.1.1.1) | Enables DoH **and** points every connected physical adapter at 1.1.1.1 / 1.0.0.1 (their previous DNS is saved for Undo). Adapters already using a local DNS proxy such as Cloudflare WARP are skipped |
 | Disable Delivery Optimization P2P | Stops Windows seeding updates to other PCs over your connection |
+| Network Adapter: No Power Saving | Stops Windows powering the NIC down and disables Energy-Efficient Ethernet where the driver has it (restart needed) |
 
 ### 🗑 Bloatware Removal
-Removes pre-installed Microsoft and third-party UWP packages from both user and provisioned scopes, including: Bing News & Weather, Zune Music/Video, Solitaire Collection, Windows Maps, Phone Link, Clipchamp, Xbox apps & overlays, third-party ad tiles (LinkedIn, Disney, Spotify, TikTok, Instagram), Office Hub & OneNote, 3D Viewer & Print 3D.
+Removes pre-installed Microsoft and third-party UWP packages from both user and provisioned scopes, including: Bing News & Weather, Zune Music/Video, Solitaire Collection, Windows Maps, Phone Link, Clipchamp, Xbox apps & overlays, third-party ad tiles (LinkedIn, Disney, Spotify, TikTok, Instagram, Facebook, Candy Crush, Netflix, Prime Video, Duolingo, Hulu, Pandora, Twitter, Adobe Express), Office Hub & OneNote, 3D Viewer & Print 3D, the Copilot app, Cortana, Get Help / Tips / Feedback Hub, New Outlook & Mail and Calendar, and Mixed Reality Portal / Dev Home / Power Automate.
 
 > ⚠ Bloatware removal cannot be undone — removed apps must be reinstalled from the Microsoft Store.
 
@@ -169,6 +199,13 @@ Removes pre-installed Microsoft and third-party UWP packages from both user and 
 | Disable SMBv1 | Removes the WannaCry/EternalBlue-vulnerable protocol |
 | Disable NetBIOS over TCP/IP | Stops NetBIOS broadcasts — prevents NBNS poisoning |
 | Ensure Defender Real-Time Protection | Forces Defender real-time monitoring ON via policy + cmdlet |
+| Disable LLMNR | Closes the multicast name lookup used for Responder-style credential capture |
+| Ensure Windows Firewall Is On | Turns on any firewall profile (Domain/Private/Public) that's off; each profile's old state is saved for Undo |
+| Defender: Block Unwanted Apps & Network Protection | Potentially-unwanted-app blocking and Network Protection via policy |
+| Remove PowerShell 2.0 | Removes the old engine that malware downgrades to in order to dodge logging (reported as already done on builds that no longer ship it) |
+| Disable Remote Assistance | Refuses "invite someone to help you" sessions (Quick Assist is unaffected) |
+| Always Show File Extensions | Stops `invoice.pdf.exe` passing for a PDF |
+| Disable Teredo, 6to4 & ISATAP Tunnelling | Turns off the IPv6-over-IPv4 tunnels. ⚠ Some Xbox Live / peer-to-peer games use Teredo for NAT traversal — Undo it if matchmaking breaks |
 
 ### ⚠ Advanced Tweaks
 Lower-level tweaks for power users. Off by default.
@@ -186,6 +223,8 @@ Lower-level tweaks for power users. Off by default.
 | TSC Sync Policy: Legacy | Reduces scheduling micro-jitter on multi-core systems |
 | Enable x2APIC Mode | Improves interrupt delivery on many-core CPUs (HEDT, Ryzen) |
 | Unhide Processor Boost Mode | Reveals the hidden "Processor performance boost mode" dropdown in Advanced Power Settings — doesn't force a value, just lets you choose one yourself |
+| Disable VBS & Memory Integrity | ⚠ Turns off virtualization-based security and HVCI — can raise FPS on some CPUs, but removes protection against vulnerable drivers. In no preset; pick it on purpose |
+| Disable Multiplane Overlay | Workaround for flicker / black screens on some NVIDIA and multi-monitor setups. In no preset |
 
 ### 💻 Laptop (Battery Life)
 Battery-focused tweaks. Off by default — use the **💻 Laptop** preset or pick them individually. Power-plan tweaks only change the **on battery** side of the active plan, so plugged-in performance is untouched, and every value is backed up for Undo.
@@ -294,6 +333,10 @@ A GitHub release should include both `Win11Optimizer-Portable.exe` (the raw publ
 - Disabling Windows Copilot only blocks it from launching — it does not remove the taskbar icon (pair with the existing Chat/Teams icon tweak if you want the icon gone too)
 - Driver Cleanup only ever removes packages the app confirms are **not** currently bound to a device — "Select Unused" respects the same lock — if you plug that device back in, Windows will need to reinstall the driver
 - Disk Cleanup skips any locked/in-use files automatically rather than failing the whole pass; the freed total shown after cleaning is measured, not estimated
+- DNS-over-HTTPS changes the DNS servers of connected physical adapters only; VPN/virtual adapters and adapters already pointed at a local resolver (`127.x`) are left alone. Undo puts each adapter's previous servers back, or resets it to automatic (DHCP)
+- Firewall, DNS, Reserved Storage and PowerShell 2.0 changes are backed up as structured entries in `tweaks_backup.json` and validated before Undo runs them, so a hand-edited backup file can't inject commands
+- *Disable VBS & Memory Integrity* won't take effect if Windows has it locked by firmware (UEFI lock)
+- *Optimizations for Windowed Games* merges into the existing `DirectXUserGlobalSettings` list, so Auto HDR and VRR choices already stored there are kept
 
 ---
 
