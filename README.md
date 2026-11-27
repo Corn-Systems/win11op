@@ -3,7 +3,7 @@
 > A clean, open-source Windows 10/11 optimizer built in C# / WinForms.  
 > Drop it on a fresh Windows install, run it once as Administrator, and apply exactly the tweaks you want — with full per-tweak undo support.
 
-**Version:** `1.5.1`  
+**Version:** `1.5.2`  
 **Platform:** Windows 10 / 11 (64-bit)  
 **Runtime:** Self-contained — no .NET install required  
 **License:** MIT

@@ -5,7 +5,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [1.5.2] - 2026-11-27
 
 A bug-fix and DPI pass. No tweak writes different values than before; what changed is how the app tracks, reports and reverts them.
 
