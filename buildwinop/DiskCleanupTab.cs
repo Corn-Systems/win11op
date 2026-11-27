@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
@@ -84,7 +85,7 @@ namespace Win11Optimizer
 
     public class cleanupCategoryRow : cardRow
     {
-        private readonly CheckBox _checkbox = new() { Size = new Size(24, 24), Location = new Point(10, 19), Cursor = Cursors.Hand };
+        private readonly CheckBox _checkbox = new() { Size = new Size(Dpi.S(24), Dpi.S(24)), Location = new Point(Dpi.S(10), Dpi.S(19)), Cursor = Cursors.Hand };
         private readonly Label    _nameLbl, _descLbl, _sizeBadge, _riskBadge;
         private readonly Color    _riskColor;
 
@@ -117,11 +118,11 @@ namespace Win11Optimizer
 
         protected override void layoutRow()
         {
-            int r = Width - 10;
+            int r = Width - Dpi.S(10);
             place(r, _riskBadge, -12);
             place(r, _sizeBadge, 12);
-            r -= Math.Max(_riskBadge.Width, _sizeBadge.Width) + 10;
-            _nameLbl.Width = _descLbl.Width = Math.Max(60, r - 46);
+            r -= Math.Max(_riskBadge.Width, _sizeBadge.Width) + Dpi.S(10);
+            _nameLbl.Width = _descLbl.Width = Math.Max(Dpi.S(60), r - Dpi.S(46));
         }
     }
 }

@@ -5,6 +5,36 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+A bug-fix and DPI pass. No tweak writes different values than before; what changed is how the app tracks, reports and reverts them.
+
+### 🖥 DPI / display scaling
+- **Every screen is now per-monitor DPI aware.** Moving the window to a monitor with different scaling (or changing the scaling setting) used to resize only the four outer panels; tiles, list rows, buttons and fonts kept the old monitor's size, so text clipped at 150 % and chrome looked oversized at 100 %. The UI now rebuilds at the new scale (search, selections, log and the open view are kept). If a run or a scan is in progress, the rebuild waits until it finishes.
+- Fonts are created in pixels for the current monitor instead of in points at the sign-in DPI, so text matches the controls on a second monitor.
+- The Startup, Services, Driver Cleanup and Disk Cleanup tabs, the History cards, the log header, the sidebar count badges and the tile painting were drawn at fixed 100 % sizes; they now scale.
+- Moving a maximized window between monitors no longer un-maximizes it.
+- The Services and Driver Cleanup warning banners wrap instead of pushing the list sideways.
+- The title bar now matches the top bar on Windows 11 (shared `DarkTitleBar.cs`).
+
+### 🐛 Fixed
+- **Undo reverted tweaks you never applied.** Undoing a category ran every command-based revert in it, so undoing a Privacy run that only turned off the Advertising ID also re-enabled DiagTrack and the telemetry tasks, and undoing Performance turned hibernation and Windows Search back on. Each run now records which tweaks it applied, and Undo only reverts those.
+- **Failed tweaks showed "✔ Done" and were saved as applied.** Tiles with a failed step now show "✘ Failed — see log" and are not marked applied (GUI and `--apply` CLI).
+- **Tweaks detected as already set were saved as "applied by app".** On the next launch they showed the green dot, were never re-checked, and still read as applied after you changed them back in Windows. Detection results are no longer saved.
+- **Changing category, applying a preset or importing a profile during a run** disposed the tiles the run was still updating. Navigation is locked while a run is in progress, and closing the window mid-run asks first.
+- **Startup Manager:** entries Windows had re-enabled (flag `06`) showed as disabled; the hidden `desktop.ini` was listed as a startup item; startup-folder shortcuts disabled in Task Manager showed as enabled and couldn't be toggled (they can now, using the same flag Task Manager uses); 32-bit machine-wide entries (`WOW6432Node` / `Run32`) were missing; publishers of unquoted paths with spaces were blank. Deleting an entry also removes its leftover enabled/disabled flag.
+- **Restart Explorer** could open a second Explorer window, or bring the shell back elevated (it was launched from this elevated process while Windows was already restarting it). It now waits for Windows to restart the shell, and runs off the UI thread.
+- **Services → Restore** forgot the recorded original start type even when the restore failed.
+- **Driver Cleanup:** removal no longer uses `pnputil /force` (which removes a package even while a device is using it), and only `oem*.inf` names are passed to pnputil. When several driver-store folders share one INF name, the size now comes from the matching version instead of an arbitrary folder.
+- **PowerShell calls** are passed with `-EncodedCommand` and read back as UTF-8, so adapter names with non-ASCII characters (localized Windows) no longer break the network, DNS and firewall tweaks or their Undo.
+- Registry backups of DWORD/QWORD values are written and parsed culture-invariant.
+- `--silent` no longer opens a console window when there is no parent console (e.g. Task Scheduler).
+- Exporting a profile with nothing selected wrote a file that Import then rejected; it now asks you to select something first.
+- Legacy-file migration ran before the single-instance check, so two launches could race; `services_backup.json` is now migrated too.
+- The installer reads its version from the published exe, and the csproj has a single `<Version>`, so version numbers can't drift.
+
+---
+
 ## [1.5.1] - 2026-10-10
 
 A big release: 31 new tweaks, a new Laptop section, a preset overhaul, and a large internal refactor (≈34% less code) with a batch of crash, hang, and safety fixes found along the way. Every tweak that existed before the refactor writes the same registry values and runs the same commands as before — this was verified by running the old and new tweak engines side by side against a sandboxed registry. The tweaks added or changed afterwards are listed below.

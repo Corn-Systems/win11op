@@ -327,7 +327,8 @@ A GitHub release should include both `Win11Optimizer-Portable.exe` (the raw publ
 - Windows Recall tweaks are a no-op on non-Copilot+ PCs — safe to apply on any hardware
 - NVIDIA telemetry tweaks are a no-op if NVIDIA drivers are not installed
 - The hosts file block list is cleanly removed by the Privacy undo function
-- Startup folder shortcuts cannot be disabled (Windows limitation), only deleted
+- Startup folder shortcuts can be disabled as well as deleted — the Startup Manager uses the same `StartupApproved` flag as Task Manager, so a change made in either shows up in the other
+- Per-category Undo only reverts the command-based tweaks (services, scheduled tasks, `bcdedit`, `fsutil`, hibernation…) that a run actually applied, not everything in the category
 - MSI Mode and IRQ Affinity tweaks target the primary GPU adapter slot (0000) only
 - "Unhide Processor Boost Mode" only reveals the setting in Control Panel's Advanced Power Settings — it does not itself change boost behavior. Pick the mode yourself once it's visible; the "aggressive" values mean different things across Intel/AMD/laptop hardware, so this app won't pick one for you
 - Disabling Windows Copilot only blocks it from launching — it does not remove the taskbar icon (pair with the existing Chat/Teams icon tweak if you want the icon gone too)

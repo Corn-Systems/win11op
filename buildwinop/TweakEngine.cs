@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -86,6 +87,9 @@ namespace Win11Optimizer
         private const string powerCfgKind = "PowerCfg";
         // Backups that aren't registry values. keyPath = <PREFIX>\<target>, valueName = what was changed, valueData = the original.
         private const string markerKind = "Marker", dnsKind = "Dns", firewallKind = "Firewall";
+        // One per tweak key a run applied (keyPath = APPLIED\<key>). Undo uses these to revert only
+        // the command-based tweaks that were really applied, not the whole category.
+        private const string appliedKind = "Applied";
         private static readonly List<backupEntry> _backups = new();
         private static readonly HashSet<string>   _appliedCategories = new(StringComparer.OrdinalIgnoreCase);
         public static bool hasBackup(string category) => _appliedCategories.Contains(category);
@@ -128,7 +132,13 @@ namespace Win11Optimizer
                 if (cur != null)
                 {
                     string kind = key.GetValueKind(valueName).ToString();
-                    string data = cur switch { byte[] b => Convert.ToBase64String(b), string[] l => string.Join("\n", l), _ => cur.ToString() };
+                    string data = cur switch
+                    {
+                        byte[] b   => Convert.ToBase64String(b),
+                        string[] l => string.Join("\n", l),
+                        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),   // DWORD / QWORD
+                        _          => cur.ToString()
+                    };
                     (entry.existed, entry.valueKind, entry.valueData) = (true, kind, data);
                 }
             }
@@ -147,7 +157,7 @@ namespace Win11Optimizer
             _appliedCategories.UnionWith(loaded.Select(b => b.category));
         }
 
-        private static List<tweakResult> restoreCategory(string category)
+        private static List<tweakResult> restoreCategory(string category, HashSet<string> appliedKeys)
         {
             var res = new List<tweakResult>();
             bool powerTouched = false;
@@ -155,6 +165,12 @@ namespace Win11Optimizer
             {
                 try
                 {
+                    if (b.valueKind == appliedKind)
+                    {
+                        appliedKeys.Add(b.valueName);
+                        _backups.Remove(b);
+                        continue;
+                    }
                     if (b.valueKind == powerCfgKind)
                     {
                         // keyPath = POWERCFG\<scheme>\<subgroup>\<setting>, valueName = AC | DC
@@ -182,8 +198,8 @@ namespace Win11Optimizer
                         var kind = Enum.Parse<RegistryValueKind>(b.valueKind);
                         Registry.SetValue(b.keyPath, b.valueName, kind switch
                         {
-                            RegistryValueKind.DWord       => int.Parse(b.valueData),
-                            RegistryValueKind.QWord       => long.Parse(b.valueData),
+                            RegistryValueKind.DWord       => int.Parse(b.valueData, CultureInfo.InvariantCulture),
+                            RegistryValueKind.QWord       => long.Parse(b.valueData, CultureInfo.InvariantCulture),
                             RegistryValueKind.Binary      => Convert.FromBase64String(b.valueData),
                             RegistryValueKind.MultiString => b.valueData.Split('\n'),
                             _                             => (object)b.valueData
@@ -998,67 +1014,96 @@ namespace Win11Optimizer
             if (entry.category == "Bloatware")
             {
                 if (bloatPatterns.TryGetValue(entry.tweakKey, out var patterns)) dispatch("Bloatware", () => removeApps(patterns));
+                else report(entry.name, false, "No removal rule for " + entry.tweakKey);
             }
-            else if (entry.isAdvanced && entry.advancedKey != null) dispatch("Advanced", () => applyAdvanced(entry.advancedKey));
-            else dispatch(entry.category, () => applyTweak(entry.tweakKey));
+            else if (entry.isAdvanced && entry.advancedKey != null)
+                dispatch("Advanced", () => { recordApplied(entry.tweakKey); applyAdvanced(entry.advancedKey); });
+            else dispatch(entry.category, () => { recordApplied(entry.tweakKey); applyTweak(entry.tweakKey); });
             return _results.GetRange(start, _results.Count - start);
+        }
+
+        private static void recordApplied(string tweakKey)
+        {
+            if (!string.IsNullOrEmpty(tweakKey)) addBackup(appliedKind, "APPLIED", tweakKey, tweakKey, "");
         }
 
         // ── UNDO ──────────────────────────────────────────────────────────
         // Restores a category's registry/powercfg backups, then reverts the command-based tweaks
         // that have no registry value to put back. Returns every result from both.
+        // Each command-based revert below only runs when that tweak was actually applied. It used to run every revert in the category: undoing
+        // a Privacy run that only turned off the Advertising ID also re-enabled DiagTrack and the
+        // telemetry tasks, and undoing Performance switched hibernation and Windows Search back on
+        // even if you had them off before. Backups written before this change have no Applied
+        // entries — for those, fall back to the persisted applied-tweak list.
         public static List<tweakResult> undo(string category)
         {
             clearResults();
-            var r = restoreCategory(category);
+            var appliedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var r = restoreCategory(category, appliedKeys);
+            bool did(string key) => appliedKeys.Count > 0 ? appliedKeys.Contains(key) : appliedState.isApplied(key);
             switch (category)
             {
                 case "Performance":
-                    runCommand("powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e", "Restore Balanced power plan");
-                    enableService("SysMain");
-                    enableService("WSearch", "delayed-auto");   // Windows default is Automatic (Delayed Start)
-                    runCommand("fsutil behavior set disablelastaccess 0", "Re-enable NTFS last-access");
-                    runCommand("fsutil behavior set disable8dot3 2", "Restore 8.3 filenames (per-volume default)");
-                    runCommand("powercfg -h on", "Re-enable hibernation");
-                    runPowerShell("Enable-MMAgent -MemoryCompression", "Re-enable memory compression");
-                    runPowerShell("Enable-MMAgent -PageCombining", "Re-enable page combining");
-                    try { timeEndPeriod(1); } catch (Exception ex) { sessionLog.write("TIMER", ex); }
+                    if (did("Perf_PowerPlan")) runCommand("powercfg -setactive 381b4222-f694-41f0-9685-ff5bb260df2e", "Restore Balanced power plan");
+                    if (did("Perf_SysMain"))   enableService("SysMain");
+                    if (did("Perf_WSearch"))   enableService("WSearch", "delayed-auto");   // Windows default is Automatic (Delayed Start)
+                    if (did("Perf_NtfsLastAccess")) runCommand("fsutil behavior set disablelastaccess 0", "Re-enable NTFS last-access");
+                    if (did("Perf_8Dot3"))     runCommand("fsutil behavior set disable8dot3 2", "Restore 8.3 filenames (per-volume default)");
+                    if (did("Perf_Hibernate")) runCommand("powercfg -h on", "Re-enable hibernation");
+                    if (did("Perf_MemCompression"))
+                    {
+                        runPowerShell("Enable-MMAgent -MemoryCompression", "Re-enable memory compression");
+                        runPowerShell("Enable-MMAgent -PageCombining", "Re-enable page combining");
+                    }
+                    if (did("Perf_TimerRes")) try { timeEndPeriod(1); } catch (Exception ex) { sessionLog.write("TIMER", ex); }
                     break;
                 case "Privacy":
-                    enableService("DiagTrack");
-                    // These three default to Manual (demand) — "auto" would leave them running permanently
-                    foreach (var s in new[] { "dmwappushservice", "RetailDemo", "WerSvc" }) enableService(s, "demand");
-                    foreach (var t in telemetryTasks.Append(werQueueTask)) setTask(t, true);
-                    removeHostsBlockList();
+                    if (did("Priv_DiagTrack"))
+                    {
+                        enableService("DiagTrack");
+                        // These three default to Manual (demand) — "auto" would leave them running permanently
+                        foreach (var s in new[] { "dmwappushservice", "RetailDemo", "WerSvc" }) enableService(s, "demand");
+                    }
+                    if (did("Priv_TelemetryTasks")) foreach (var t in telemetryTasks) setTask(t, true);
+                    if (did("Priv_WER"))            setTask(werQueueTask, true);
+                    if (did("Priv_HostsBlock"))     removeHostsBlockList();
                     break;
                 case "Responsiveness":
-                    runCommand("bcdedit /deletevalue useplatformtick 2>nul",  "Restore platform tick default");
-                    runCommand("bcdedit /deletevalue useplatformclock 2>nul", "Restore platform clock default");
+                    if (did("Resp_PlatformTick"))
+                    {
+                        runCommand("bcdedit /deletevalue useplatformtick 2>nul",  "Restore platform tick default");
+                        runCommand("bcdedit /deletevalue useplatformclock 2>nul", "Restore platform clock default");
+                    }
                     // The classic menu lives in its own CLSID key — remove the whole key to bring back the Win11 menu
-                    try { Registry.CurrentUser.DeleteSubKeyTree(classicMenuClsid, throwOnMissingSubKey: false); report("Restore Windows 11 context menu"); }
-                    catch (Exception ex) { report("Restore Windows 11 context menu", false, ex.Message); }
+                    if (did("Resp_ClassicContext"))
+                        try { Registry.CurrentUser.DeleteSubKeyTree(classicMenuClsid, throwOnMissingSubKey: false); report("Restore Windows 11 context menu"); }
+                        catch (Exception ex) { report("Restore Windows 11 context menu", false, ex.Message); }
                     break;
                 case "Gaming":
-                    foreach (var s in nvidiaServices) enableService(s);
-                    foreach (var t in nvidiaTasks) setTask(t, true);
+                    if (did("Game_NvidiaTelemetry"))
+                    {
+                        foreach (var s in nvidiaServices) enableService(s);
+                        foreach (var t in nvidiaTasks) setTask(t, true);
+                    }
                     break;
                 case "Network":
-                    modifyNagle(false);
-                    runCommand("netsh int tcp set global autotuninglevel=normal", "Restore TCP auto-tuning");
-                    runPowerShell(lso("Enabled"), "Re-enable Large Send Offload (LSO)");
+                    if (did("Net_Nagle"))        modifyNagle(false);
+                    if (did("Net_TCPAutoTune"))  runCommand("netsh int tcp set global autotuninglevel=normal", "Restore TCP auto-tuning");
+                    if (did("Net_LargeOffload")) runPowerShell(lso("Enabled"), "Re-enable Large Send Offload (LSO)");
                     break;
                 case "Advanced":
-                    runCommand("bcdedit /deletevalue disabledynamictick 2>nul", "Restore dynamic tick default");
-                    runCommand(coreParking(0), "Restore CPU core parking");   // 0 = Windows-managed, park freely
-                    runCommand("bcdedit /deletevalue tscsyncpolicy 2>nul", "Restore TSC sync policy default");
-                    runCommand("bcdedit /deletevalue x2apicpolicy 2>nul",  "Restore x2APIC policy default");
+                    if (did("Adv_DynamicTick")) runCommand("bcdedit /deletevalue disabledynamictick 2>nul", "Restore dynamic tick default");
+                    if (did("Adv_CoreParking")) runCommand(coreParking(0), "Restore CPU core parking");   // 0 = Windows-managed, park freely
+                    if (did("Adv_TscSync"))     runCommand("bcdedit /deletevalue tscsyncpolicy 2>nul", "Restore TSC sync policy default");
+                    if (did("Adv_X2Apic"))      runCommand("bcdedit /deletevalue x2apicpolicy 2>nul",  "Restore x2APIC policy default");
                     break;
                 case "Security":
                     // 0 = use the NetBIOS setting from the DHCP server (Windows default)
-                    runPowerShell(
-                        "Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.TcpipNetbiosOptions -ne $null } | " +
-                        "ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName SetTcpipNetbios -Arguments @{TcpipNetbiosOptions=0} | Out-Null }",
-                        "Restore NetBIOS over TCP/IP default");
+                    if (did("Sec_NetBIOS"))
+                        runPowerShell(
+                            "Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.TcpipNetbiosOptions -ne $null } | " +
+                            "ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName SetTcpipNetbios -Arguments @{TcpipNetbiosOptions=0} | Out-Null }",
+                            "Restore NetBIOS over TCP/IP default");
                     break;
                 // Laptop: registry, powercfg and adapter-power backups cover every tweak
             }

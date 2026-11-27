@@ -47,7 +47,7 @@ namespace Win11Optimizer
                 // If the in-use lookup failed, lock everything — an empty set used to mark
                 // every package (including live device drivers) as safe to remove.
                 p.inUse     = inUse == null || inUse.Contains(p.publishedName);
-                p.sizeBytes = folderSize(p.originalName);
+                p.sizeBytes = folderSize(p);
             }
             return pkgs.OrderByDescending(p => p.sizeBytes).ToList();
         }
@@ -100,23 +100,50 @@ namespace Win11Optimizer
             return null;
         }
 
-        private static long folderSize(string originalName)
+        // FileRepository folders look like "nvhda.inf_amd64_8f3a2c1...". Several versions of one
+        // driver share the INF name, so taking the first match gave every old version the size of
+        // one arbitrary folder (and inflated "unused" totals). Match on the INF's DriverVer instead.
+        private static long folderSize(driverPackage pkg)
         {
-            if (string.IsNullOrWhiteSpace(originalName) || !Directory.Exists(driverStore)) return 0;
+            if (string.IsNullOrWhiteSpace(pkg.originalName) || !Directory.Exists(driverStore)) return 0;
             try
             {
-                // FileRepository folders look like "nvhda.inf_amd64_8f3a2c1..."
-                string match = Directory.GetDirectories(driverStore, Path.GetFileNameWithoutExtension(originalName) + ".inf_*").FirstOrDefault();
-                return match == null ? 0 : diskCleanupManager.dirSize(match);
+                string infName = Path.GetFileName(pkg.originalName);
+                var candidates = Directory.GetDirectories(driverStore, Path.GetFileNameWithoutExtension(infName) + ".inf_*");
+                if (candidates.Length == 0) return 0;
+                string match = candidates.Length == 1 ? candidates[0]
+                    : candidates.FirstOrDefault(d => infVersion(Path.Combine(d, infName)) is string v && v.Equals(pkg.version, StringComparison.OrdinalIgnoreCase));
+                return match == null ? 0 : diskCleanupManager.dirSize(match);   // ambiguous → unknown, not a guess
             }
             catch (Exception ex) { sessionLog.write("DRIVER SIZE", ex); return 0; }
+        }
+
+        // "DriverVer = 10/02/2025,32.0.15.7652" → "32.0.15.7652"
+        private static readonly Regex driverVerRx = new(@"^\s*DriverVer\s*=\s*[^,]*,\s*([0-9.]+)", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        private static string infVersion(string infPath)
+        {
+            try
+            {
+                if (!File.Exists(infPath)) return null;
+                using var reader = new StreamReader(infPath, detectEncodingFromByteOrderMarks: true);
+                var m = driverVerRx.Match(reader.ReadToEnd());
+                return m.Success ? m.Groups[1].Value : null;
+            }
+            catch (Exception ex) { sessionLog.write("DRIVER INF", ex); return null; }
         }
 
         public static bool delete(driverPackage pkg, out string error)
         {
             try
             {
-                var (code, stdOut, stdErr) = proc.run("pnputil.exe", $"/delete-driver {pkg.publishedName} /uninstall /force");
+                // No /force: pnputil then refuses a package a device is still using — a safety net
+                // behind the in-use lock in case the WMI lookup missed a binding.
+                if (!Regex.IsMatch(pkg.publishedName, @"^oem\d+\.inf$", RegexOptions.IgnoreCase))
+                {
+                    error = "Not a third-party (oem*.inf) package";
+                    return false;
+                }
+                var (code, stdOut, stdErr) = proc.run("pnputil.exe", $"/delete-driver {pkg.publishedName} /uninstall");
                 error = code == 0 ? null : (string.IsNullOrWhiteSpace(stdErr) ? stdOut : stdErr).Trim();
                 return code == 0;
             }

@@ -3,18 +3,29 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
     // Shared shell for the full-page list tabs (Startup, Services, Driver / Disk Cleanup): a toolbar
     // with a "// TITLE" label, live summary and right-aligned buttons over an auto-scrolling row stack.
+    // Sizes passed to the helpers below (button widths, gaps, row heights) are logical 96-dpi pixels.
     public abstract class listTab : Panel
     {
-        protected readonly Panel toolbar  = new() { BackColor = theme.surface, Height = 54, Dock = DockStyle.Top };
-        protected readonly Panel scroller = new() { BackColor = theme.bg, Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(16, 10, 16, 10) };
+        protected readonly Panel toolbar  = new() { BackColor = theme.surface, Height = Dpi.S(54), Dock = DockStyle.Top };
+        protected readonly Panel scroller = new()
+        {
+            BackColor = theme.bg, Dock = DockStyle.Fill, AutoScroll = true,
+            Padding = new Padding(Dpi.S(16), Dpi.S(10), Dpi.S(16), Dpi.S(10))
+        };
         protected readonly Panel inner    = new() { BackColor = theme.bg, AutoSize = true };
         protected readonly Label summary;
         private bool _loaded;
+        private int  _busy;
+
+        // A scan / clean / removal is in flight — the main form postpones a DPI rebuild until it ends.
+        public bool isBusy => _busy > 0;
+        public event EventHandler idle;   // the last in-flight job finished
 
         protected listTab(string title, int summaryX)
         {
@@ -45,7 +56,7 @@ namespace Win11Optimizer
 
         protected static flatButton ghost(string text, int w, EventHandler click, Color? fg = null, Font font = null)
         {
-            var b = new flatButton(text, theme.surface2) { Size = new Size(w, 28), ForeColor = fg ?? theme.textSec };
+            var b = new flatButton(text, theme.surface2) { Size = new Size(Dpi.S(w), Dpi.S(28)), ForeColor = fg ?? theme.textSec };
             if (font != null) b.Font = font;
             b.Click += click;
             return b;
@@ -53,7 +64,7 @@ namespace Win11Optimizer
 
         protected static flatButton primary(string text, Color bg, EventHandler click)
         {
-            var b = new flatButton(text, bg) { Size = new Size(150, 28), Font = theme.mono(7.5f, true) };
+            var b = new flatButton(text, bg) { Size = new Size(Dpi.S(150), Dpi.S(28)), Font = theme.mono(7.5f, true) };
             b.Click += click;
             return b;
         }
@@ -65,7 +76,7 @@ namespace Win11Optimizer
             toolbar.SizeChanged += (s, e) => uiHelpers.layoutButtonsRightToLeft(toolbar, 13, buttons);
         }
 
-        protected void fitInner() => inner.Width = Math.Max(100, scroller.ClientSize.Width - scroller.Padding.Horizontal);
+        protected void fitInner() => inner.Width = Math.Max(Dpi.S(100), scroller.ClientSize.Width - scroller.Padding.Horizontal);
 
         // Swaps in a fresh set of rows (disposing the old ones) and wires each row's Changed event.
         protected void setRows<t>(List<t> rows, IEnumerable<t> fresh, Action changed) where t : cardRow
@@ -88,6 +99,7 @@ namespace Win11Optimizer
         {
             foreach (var c in locked) c.Enabled = false;
             summary.Text = status;
+            _busy++;
             try { await work(); return true; }
             catch (Exception ex)
             {
@@ -95,7 +107,11 @@ namespace Win11Optimizer
                 summary.Text = "✘ " + ex.Message;
                 return false;
             }
-            finally { foreach (var c in locked) c.Enabled = true; }
+            finally
+            {
+                foreach (var c in locked) c.Enabled = true;
+                if (--_busy == 0) idle?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
@@ -104,9 +120,10 @@ namespace Win11Optimizer
     {
         public event EventHandler changed;
 
+        // height is logical (96-dpi) pixels
         protected cardRow(int height)
         {
-            Height      = height;
+            Height      = Dpi.S(height);
             BackColor   = theme.card;
             SizeChanged += (s, e) => layoutRow();   // subscribed after Height, so it can't fire before the subclass builds
         }
@@ -115,10 +132,10 @@ namespace Win11Optimizer
         protected abstract void layoutRow();
         protected void onChanged() => changed?.Invoke(this, EventArgs.Empty);
 
-        // Right-aligns c against `right`, vertically centred (+dy); returns its left edge.
+        // Right-aligns c against `right` (device pixels), vertically centred (+dy, logical); returns its left edge.
         protected int place(int right, Control c, int dy = 0)
         {
-            c.Location = new Point(right - c.Width, (Height - c.Height) / 2 + dy);
+            c.Location = new Point(right - c.Width, (Height - c.Height) / 2 + Dpi.S(dy));
             return c.Left;
         }
 
@@ -128,7 +145,7 @@ namespace Win11Optimizer
             using var pen = new Pen(theme.border);
             e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
             using var br = new SolidBrush(stripe);
-            e.Graphics.FillRectangle(br, 0, 0, 3, Height);
+            e.Graphics.FillRectangle(br, 0, 0, Dpi.S(3), Height);
         }
     }
 }

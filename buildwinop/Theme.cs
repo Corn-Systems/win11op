@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Concurrent;
 using System.Drawing;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
@@ -35,9 +37,17 @@ namespace Win11Optimizer
         // Shared font cache. Controls never dispose their Font, so every label/tile/row that did
         // `new Font(...)` leaked a GDI+ font per rebuild — one instance per (family, size, style)
         // instead. Never wrap one of these in `using`.
+        //
+        // Sizes are given in points, but the Font is built in PIXELS for the monitor the window is
+        // on (Dpi.Current). A plain point-size Font is rasterised at the *system* DPI GDI captured
+        // at sign-in, so on a second monitor with different scaling the text came out too big or
+        // too small next to controls that Dpi.S() had already sized for that monitor.
         private static readonly ConcurrentDictionary<(string, float, FontStyle), Font> _fonts = new();
-        public static Font f(string family, float size, FontStyle style = FontStyle.Regular) =>
-            _fonts.GetOrAdd((family, size, style), k => new Font(k.Item1, k.Item2, k.Item3));
+        public static Font f(string family, float size, FontStyle style = FontStyle.Regular)
+        {
+            float px = (float)Math.Round(Dpi.S(size) * 96f / 72f, 2);
+            return _fonts.GetOrAdd((family, px, style), k => new Font(k.Item1, k.Item2, k.Item3, GraphicsUnit.Pixel));
+        }
         public static Font mono(float size, bool bold = false) => f("Courier New", size, bold ? FontStyle.Bold : FontStyle.Regular);
         public static Font ui(float size, bool bold = false)   => f("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
     }

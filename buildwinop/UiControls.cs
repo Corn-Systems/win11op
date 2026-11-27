@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
@@ -48,8 +49,8 @@ namespace Win11Optimizer
 
         public sectionHeader(string title, string emoji)
         {
-            Height    = 52;
-            Margin    = new Padding(5, 20, 5, 4);
+            Height    = Dpi.S(52);
+            Margin    = new Padding(Dpi.S(5), Dpi.S(20), Dpi.S(5), Dpi.S(4));
             BackColor = Color.Transparent;
             Controls.AddRange(new Control[]
             {
@@ -73,8 +74,9 @@ namespace Win11Optimizer
         private void fitToParent(object s, EventArgs e)
         {
             if (Parent == null) return;
+            // Per-monitor scrollbar width — SystemInformation.VerticalScrollBarWidth is the system-DPI value
             int w = Parent.ClientSize.Width - Parent.Padding.Horizontal - Margin.Horizontal
-                  - SystemInformation.VerticalScrollBarWidth - 2;
+                  - SystemInformation.GetVerticalScrollBarWidthForDpi((int)Dpi.Current) - Dpi.S(2);
             if (w > 0) Width = w;
             Invalidate();
         }

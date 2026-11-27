@@ -15,10 +15,18 @@
 ; ─────────────────────────────────────────────────────────────────────────
 
 #define MyAppName "Win11 Optimizer"
-#define MyAppVersion "1.5.1"
 #define MyAppPublisher "Corn Systems"
 #define MyAppURL "https://github.com/Corn-Systems/win11op"
 #define MyAppExeName "Win11Optimizer.exe"
+
+; Version comes from the published exe (i.e. <Version> in Win11Optimizer.csproj), so the
+; installer can't drift from the app — this used to be a second hard-coded copy to bump.
+#define VerMajor
+#define VerMinor
+#define VerRev
+#define VerBuild
+#define VerFull GetVersionComponents("publish\" + MyAppExeName, VerMajor, VerMinor, VerRev, VerBuild)
+#define MyAppVersion Str(VerMajor) + "." + Str(VerMinor) + "." + Str(VerRev)
 
 [Setup]
 ; Fixed GUID — do not change between releases, it's how Windows tracks upgrades/uninstalls

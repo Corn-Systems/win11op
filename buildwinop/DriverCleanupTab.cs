@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
@@ -12,6 +13,9 @@ namespace Win11Optimizer
         private readonly flatButton _scanBtn, _removeBtn;
         private readonly Label _emptyLabel = uiHelpers.lbl("Click \"Scan Driver Store\" to look for removable driver packages.",
                                                            theme.mono(9f), theme.textDim, 0, 56);
+        private readonly Label _banner = uiHelpers.banner(
+            "⚠  Removing a driver package is more disruptive than a registry tweak — packages currently in use are locked and can't be selected.",
+            theme.warning);
         private List<driverPackage> _packages = new();
         private readonly List<driverPackageRow> _rows = new();
 
@@ -25,12 +29,7 @@ namespace Win11Optimizer
 
             // Added straight to the stack — it used to sit in a default 200px-wide panel that clipped the text
             _emptyLabel.Visible = false;
-            inner.Controls.AddRange(new Control[]
-            {
-                uiHelpers.lbl("⚠  Removing a driver package is more disruptive than a registry tweak — packages currently in use are locked and can't be selected.",
-                    theme.mono(7.5f), theme.warning, 0, 0),
-                _emptyLabel
-            });
+            inner.Controls.AddRange(new Control[] { _banner, _emptyLabel });
         }
 
         protected override void onFirstActivate() => _ = scanAsync();
@@ -38,7 +37,10 @@ namespace Win11Optimizer
         protected override void reflow()
         {
             // Rows start below the warning banner (and the empty-state hint when it shows)
-            if (inner.Width >= 10) uiHelpers.reflowRowsVertically(inner, _rows, _emptyLabel.Visible ? 86 : 56);
+            if (inner.Width < 10) return;
+            _banner.MaximumSize = new Size(inner.Width, 0);   // wrap instead of widening the list
+            _emptyLabel.Top = _banner.Bottom + Dpi.S(16);
+            uiHelpers.stackRows(inner, _rows, (_emptyLabel.Visible ? _emptyLabel.Bottom : _banner.Bottom) + Dpi.S(16));
         }
 
         // In-use packages have their checkbox disabled — this only touches packages the scan confirmed removable.
@@ -105,7 +107,7 @@ namespace Win11Optimizer
             package   = pkg;
             _checkbox = new CheckBox
             {
-                Size = new Size(24, 24), Location = new Point(10, 17),
+                Size = new Size(Dpi.S(24), Dpi.S(24)), Location = new Point(Dpi.S(10), Dpi.S(17)),
                 Enabled = !pkg.inUse, Cursor = pkg.inUse ? Cursors.No : Cursors.Hand
             };
             _checkbox.CheckedChanged += (s, e) => onChanged();
@@ -127,9 +129,9 @@ namespace Win11Optimizer
 
         protected override void layoutRow()
         {
-            int r = place(Width - 10, _statusBadge) - 8;
-            r = place(r, _sizeBadge) - 8;
-            _nameLbl.Width = _providerLbl.Width = Math.Max(60, r - 46);
+            int r = place(Width - Dpi.S(10), _statusBadge) - Dpi.S(8);
+            r = place(r, _sizeBadge) - Dpi.S(8);
+            _nameLbl.Width = _providerLbl.Width = Math.Max(Dpi.S(60), r - Dpi.S(46));
         }
     }
 }

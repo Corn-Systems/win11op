@@ -2,10 +2,13 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
     // Small construction/layout helpers shared by the main form and the list tabs.
+    // Every position / size / gap argument here is in LOGICAL (96-dpi) pixels and is scaled with
+    // Dpi.S() inside, so call sites read like the design numbers and stay right at any scaling.
     public static class uiHelpers
     {
         // Transparent label at (x, y). h = 0 → AutoSize; otherwise a fixed height (the caller's
@@ -15,9 +18,9 @@ namespace Win11Optimizer
             var l = new Label
             {
                 Text = text, Font = font, ForeColor = fg, BackColor = Color.Transparent,
-                Location = new Point(x, y), AutoSize = h == 0, UseMnemonic = false
+                Location = new Point(Dpi.S(x), Dpi.S(y)), AutoSize = h == 0, UseMnemonic = false
             };
-            if (h > 0) { l.Height = h; l.AutoEllipsis = true; }
+            if (h > 0) { l.Height = Dpi.S(h); l.AutoEllipsis = true; }
             return l;
         }
 
@@ -29,8 +32,16 @@ namespace Win11Optimizer
             ForeColor = fg,
             BackColor = bg,
             AutoSize  = true,
-            Padding   = new Padding(4, 2, 4, 2)
+            Padding   = new Padding(Dpi.S(4), Dpi.S(2), Dpi.S(4), Dpi.S(2))
         };
+
+        // Multi-line notice that wraps to the width it's given instead of running off the right edge.
+        public static Label banner(string text, Color fg)
+        {
+            var l = lbl(text, theme.mono(7.5f), fg, 0, 0);
+            l.MaximumSize = new Size(Dpi.S(600), 0);
+            return l;
+        }
 
         // Badge tinted from one colour: faint fill, full-strength text.
         public static Label badge(string text, Color c) => makeBadge(text, Color.FromArgb(30, c), c);
@@ -59,29 +70,33 @@ namespace Win11Optimizer
         }
 
         // Lays out toolbar buttons right-to-left from the container's right edge.
-        // Pass buttons in visual right-to-left order with the gap (px) to leave before the
+        // Pass buttons in visual right-to-left order with the gap to leave before the
         // next button to its left.
         public static void layoutButtonsRightToLeft(Control container, int y,
             params (Control control, int gapAfter)[] buttons)
         {
-            int r = container.Width - 12;
+            int r = container.Width - Dpi.S(12);
             foreach (var (control, gapAfter) in buttons)
             {
-                control.Location = new Point(r - control.Width, y);
-                r -= control.Width + gapAfter;
+                control.Location = new Point(r - control.Width, Dpi.S(y));
+                r -= control.Width + Dpi.S(gapAfter);
             }
         }
 
-        // Stacks rows vertically inside innerPanel starting at startY, with `spacing` px
+        // Stacks rows vertically inside innerPanel starting at startY, with `spacing`
         // between rows, and resizes innerPanel.Height to fit.
-        public static void reflowRowsVertically(Panel innerPanel, IEnumerable<Control> rows, int startY, int spacing = 2)
+        public static void reflowRowsVertically(Panel innerPanel, IEnumerable<Control> rows, int startY, int spacing = 2) =>
+            stackRows(innerPanel, rows, Dpi.S(startY), spacing);
+
+        // Same, but startYPx is already in device pixels (e.g. just below a wrapped banner).
+        public static void stackRows(Panel innerPanel, IEnumerable<Control> rows, int startYPx, int spacing = 2)
         {
-            int y = startY;
+            int y = startYPx;
             foreach (var row in rows)
             {
                 row.Width    = innerPanel.Width;
                 row.Location = new Point(0, y);
-                y += row.Height + spacing;
+                y += row.Height + Dpi.S(spacing);
             }
             innerPanel.Height = y;
         }

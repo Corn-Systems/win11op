@@ -26,8 +26,6 @@ namespace Win11Optimizer
                 Application.ThreadException += (s, e) => logCrash(e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => logCrash(e.ExceptionObject as Exception);
 
-                appPaths.migrateLegacyFiles();   // also creates Data\
-
                 mutex = new Mutex(true, mutexName, out owned);
                 if (!owned)
                 {
@@ -41,6 +39,9 @@ namespace Win11Optimizer
                     else MessageBox.Show("Win11 Optimizer is already running.", "Win11 Optimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
+
+                // After the single-instance check, so a second launch can't race the first one's move
+                appPaths.migrateLegacyFiles();   // also creates Data\
 
                 winVersion.detect();
                 changeLog.load();

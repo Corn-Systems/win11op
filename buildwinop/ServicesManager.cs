@@ -146,11 +146,14 @@ namespace Win11Optimizer
 
                 sc($"config \"{svc.key}\" start= {mode}");
                 if (original == serviceStartType.automatic) sc($"start \"{svc.key}\"");
-                lock (_lock) { _originals.Remove(svc.key); saveOriginals(); }
                 refreshState(svc);
 
-                error = svc.isDisabled ? "Service is still disabled (protected or access denied)." : null;
-                return !svc.isDisabled;
+                // Only forget the recorded original once the restore actually took — dropping it on a
+                // failed attempt meant the next Restore fell back to Manual instead of what you had.
+                if (svc.isDisabled) { error = "Service is still disabled (protected or access denied)."; return false; }
+                lock (_lock) if (_originals.Remove(svc.key)) saveOriginals();
+                error = null;
+                return true;
             }
             catch (Exception ex) { error = ex.Message; return false; }
         }

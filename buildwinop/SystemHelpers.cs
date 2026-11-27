@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Reflection;
-using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -13,8 +15,8 @@ using System.Windows.Forms;
 namespace Win11Optimizer
 {
     // ── APP VERSION ──────────────────────────────────────────────────────────
-    // Read from the assembly, so <Version> in the .csproj (plus MyAppVersion in the
-    // .iss) is the only thing to bump. The SDK may append "+<commit>" — strip it.
+    // Read from the assembly, so <Version> in the .csproj is the only thing to bump (the
+    // .iss reads it from the published exe). The SDK may append "+<commit>" — strip it.
     public static class appVersion
     {
         public static readonly string current =
@@ -32,13 +34,15 @@ namespace Win11Optimizer
     // soon as a chatty child such as DISM fills the unread pipe's buffer.
     public static class proc
     {
-        public static (int code, string output, string error) run(string file, string args)
+        public static (int code, string output, string error) run(string file, string args, Encoding encoding = null)
         {
-            using var p = Process.Start(new ProcessStartInfo(file, args)
+            var psi = new ProcessStartInfo(file, args)
             {
                 CreateNoWindow = true, UseShellExecute = false,
                 RedirectStandardOutput = true, RedirectStandardError = true
-            }) ?? throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
+            };
+            if (encoding != null) psi.StandardOutputEncoding = psi.StandardErrorEncoding = encoding;
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException("Process.Start returned null (shell declined to launch).");
             var o = p.StandardOutput.ReadToEndAsync();
             var e = p.StandardError.ReadToEndAsync();
             p.WaitForExit();
@@ -47,38 +51,33 @@ namespace Win11Optimizer
 
         public static (int code, string output, string error) cmd(string command) => run("cmd.exe", "/c " + command);
 
-        public static (int code, string output, string error) powerShell(string script) =>
-            run("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"");
+        // -EncodedCommand (Base64 UTF-16LE) instead of -Command "<script>": a script containing a
+        // double quote can't break out of the command line, and output is forced to UTF-8 so
+        // adapter / profile names with non-ASCII characters (localized Windows) survive the round
+        // trip back into Set-NetAdapter* / Set-DnsClient* calls instead of turning into '?'.
+        public static (int code, string output, string error) powerShell(string script)
+        {
+            string full = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $ProgressPreference = 'SilentlyContinue'; " + script;
+            string b64  = Convert.ToBase64String(Encoding.Unicode.GetBytes(full));
+            var (code, output, error) = run("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + b64, new UTF8Encoding(false));
+            return (code, output, clixmlToText(error));
+        }
+
+        // With a redirected stderr PowerShell may serialise its error stream as CLIXML
+        // ("#< CLIXML <Objs …><S S="Error">…</S>"). Turn that back into the plain message.
+        private static string clixmlToText(string err)
+        {
+            if (string.IsNullOrEmpty(err) || !err.TrimStart().StartsWith("#< CLIXML", StringComparison.Ordinal)) return err;
+            var text = string.Concat(Regex.Matches(err, "<S S=\"Error\">(.*?)</S>", RegexOptions.Singleline).Select(m => m.Groups[1].Value));
+            text = Regex.Replace(text, "_x([0-9A-Fa-f]{4})_", m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
+            return WebUtility.HtmlDecode(text).Trim();
+        }
 
         // Opens a URL or file with its default handler.
         public static void open(string target)
         {
             try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose(); }
             catch (Exception ex) { sessionLog.write("OPEN " + target, ex); }
-        }
-    }
-
-    // ── DARK TITLE BAR ───────────────────────────────────────────────────────
-    // The form body is full Corn Systems dark, but Windows paints the title bar
-    // white by default. DWMWA_USE_IMMERSIVE_DARK_MODE flips it to dark. The
-    // attribute id is 20 on Win10 20H1+ / Win11, and 19 on older 1809 builds.
-    public static class darkTitleBar
-    {
-        [DllImport("dwmapi.dll", PreserveSig = true, EntryPoint = "DwmSetWindowAttribute")]
-        private static extern int dwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
-
-        private const int dwmwaUseImmersiveDarkMode        = 20;
-        private const int dwmwaUseImmersiveDarkModeLegacy = 19;
-
-        public static void apply(Form form)
-        {
-            try
-            {
-                int on = 1;
-                if (dwmSetWindowAttribute(form.Handle, dwmwaUseImmersiveDarkMode, ref on, sizeof(int)) != 0)
-                    dwmSetWindowAttribute(form.Handle, dwmwaUseImmersiveDarkModeLegacy, ref on, sizeof(int));
-            }
-            catch (Exception ex) { sessionLog.write("DARK TITLE BAR", ex); }   // older builds without the attribute — cosmetic only
         }
     }
 
@@ -107,6 +106,7 @@ namespace Win11Optimizer
     // ── EXPLORER RESTART ─────────────────────────────────────────────────────
     // Many shell/UI tweaks (visual effects, menu delay, taskbar icons, animation
     // masks) take effect after an Explorer restart — no full reboot needed.
+    // Blocking (it waits for the shell to come back) — call it from a background thread.
     public static class explorerHelper
     {
         public static bool restart(out string error)
@@ -114,10 +114,28 @@ namespace Win11Optimizer
             error = null;
             try
             {
-                proc.run("taskkill.exe", "/f /im explorer.exe");
-                Thread.Sleep(500);   // give the shell a beat to fully exit before relaunching
-                // UseShellExecute so Explorer starts as the shell, not a child window
-                Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true })?.Dispose();
+                var (code, _, err) = proc.run("taskkill.exe", "/f /im explorer.exe");
+                // 128 = no explorer.exe was running; anything else non-zero means it couldn't be killed
+                if (code != 0 && code != 128) { error = string.IsNullOrWhiteSpace(err) ? $"taskkill exit code {code}" : err.Trim(); return false; }
+
+                // Winlogon restarts the shell itself (AutoRestartShell=1, the default) and starts it
+                // as the signed-in user. Launching explorer.exe ourselves straight away used to race
+                // that: either a second Explorer window popped open, or — when ours won — the shell
+                // came back running ELEVATED, because this process is elevated.
+                for (int i = 0; i < 20; i++)
+                {
+                    Thread.Sleep(250);
+                    if (Process.GetProcessesByName("explorer").Length > 0) return true;
+                }
+
+                // AutoRestartShell is off, so start it ourselves — de-elevated via
+                // `runas /trustlevel` (basic-user token), falling back to a plain launch.
+                var (rc, _, rerr) = proc.run("runas.exe", "/trustlevel:0x20000 explorer.exe");
+                if (rc != 0)
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true })?.Dispose();
+                    sessionLog.write($"EXPLORER: runas /trustlevel failed ({rerr?.Trim()}), started explorer.exe directly");
+                }
                 return true;
             }
             catch (Exception ex) { error = ex.Message; return false; }

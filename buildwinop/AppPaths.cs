@@ -36,7 +36,7 @@ namespace Win11Optimizer
         public static void migrateLegacyFiles()
         {
             ensureDataDir();
-            foreach (var name in new[] { changeLogFile, tweaksBackupFile, appliedStateFile, crashLog, cliRunLog, lastVersionFile }.Select(Path.GetFileName))
+            foreach (var name in new[] { changeLogFile, tweaksBackupFile, appliedStateFile, servicesBackupFile, crashLog, cliRunLog, lastVersionFile }.Select(Path.GetFileName))
             {
                 string from = Path.Combine(baseDir, name), to = data(name);
                 try { if (File.Exists(from) && !File.Exists(to)) File.Move(from, to); }

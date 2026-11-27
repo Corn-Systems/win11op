@@ -9,7 +9,7 @@ using CornSystems;   // shared Dpi helper — byte-identical across Corn Systems
 namespace Win11Optimizer
 {
     public enum appliedSource { none, appliedByApp, detectedOnSystem }
-    public enum tileStatus    { none, running, done }
+    public enum tileStatus    { none, running, done, failed }
 
     public class tweakTile : Panel
     {
@@ -21,6 +21,7 @@ namespace Win11Optimizer
         private Label         _nameLabel, _descLabel;
 
         public tweakEntry entry { get; }
+        public tileStatus status => _status;
         public event EventHandler checkedChanged;
 
         // Why this tweak can't be used on this PC (null = usable). An unavailable tile can never be
@@ -77,14 +78,17 @@ namespace Win11Optimizer
                 using var border = new Pen(_checked ? Color.FromArgb(120, ac) : theme.border, 1f);
                 g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
                 using var accent = new SolidBrush(_checked ? ac : Color.FromArgb(60, ac));
-                g.FillRectangle(accent, 0, 0, 2, Height);
+                g.FillRectangle(accent, 0, 0, Dpi.S(2), Height);
 
                 if (_checked)
                 {
                     // Checkmark indicator — filled accent circle with a dark check
-                    g.FillEllipse(accent, Width - 20, 8, 12, 12);
-                    using var tick = new Pen(theme.accentText, 1.5f);
-                    g.DrawLines(tick, new[] { new Point(Width - 18, 14), new Point(Width - 15, 17), new Point(Width - 11, 11) });
+                    g.FillEllipse(accent, Width - Dpi.S(20), Dpi.S(8), Dpi.S(12), Dpi.S(12));
+                    using var tick = new Pen(theme.accentText, Dpi.S(1.5f));
+                    g.DrawLines(tick, new[]
+                    {
+                        new Point(Width - Dpi.S(18), Dpi.S(14)), new Point(Width - Dpi.S(15), Dpi.S(17)), new Point(Width - Dpi.S(11), Dpi.S(11))
+                    });
                 }
 
                 // "Already applied" indicator — bottom-left dot + label
@@ -93,21 +97,22 @@ namespace Win11Optimizer
                     Color dot = _applied == appliedSource.detectedOnSystem ? theme.skyPurple : theme.success;
                     using var dotBr = new SolidBrush(dot);
                     using var txtBr = new SolidBrush(Color.FromArgb(80, dot));
-                    g.FillEllipse(dotBr, 10, Height - 16, 6, 6);
-                    g.DrawString("applied", theme.mono(6.5f), txtBr, 20, Height - 18);
+                    g.FillEllipse(dotBr, Dpi.S(10), Height - Dpi.S(16), Dpi.S(6), Dpi.S(6));
+                    g.DrawString("applied", theme.mono(6.5f), txtBr, Dpi.S(20), Height - Dpi.S(18));
                 }
 
                 if (_statusText.Length > 0)
                 {
                     using var sb = new SolidBrush(_statusColor);
-                    g.DrawString(_statusText, theme.mono(7f), sb, 12, Height - 18);
+                    g.DrawString(_statusText, theme.mono(7f), sb, Dpi.S(12), Height - Dpi.S(18));
                 }
 
                 if (unavailableReason != null)
                 {
                     using var sb  = new SolidBrush(theme.warning);
                     using var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-                    g.DrawString("⛔ " + unavailableReason, theme.mono(6.5f), sb, new RectangleF(10, Height - 18, Width - 16, 14), fmt);
+                    g.DrawString("⛔ " + unavailableReason, theme.mono(6.5f), sb,
+                                 new RectangleF(Dpi.S(10), Height - Dpi.S(18), Width - Dpi.S(16), Dpi.S(14)), fmt);
                 }
             };
 
@@ -134,7 +139,7 @@ namespace Win11Optimizer
                 {
                     Text = entry.isAdvanced ? "⚠ ADV" : entry.category.ToUpper(), Font = theme.mono(6.5f, true),
                     ForeColor = Color.FromArgb(180, ac), BackColor = Color.FromArgb(30, ac),
-                    AutoSize = true, Location = new Point(Dpi.S(10), Dpi.S(52)), Padding = new Padding(3, 1, 3, 1)
+                    AutoSize = true, Location = new Point(Dpi.S(10), Dpi.S(52)), Padding = new Padding(Dpi.S(3), Dpi.S(1), Dpi.S(3), Dpi.S(1))
                 },
             });
 
@@ -175,6 +180,7 @@ namespace Win11Optimizer
             {
                 tileStatus.running => ("⏳ Running...", theme.warning),
                 tileStatus.done    => ("✔ Done", theme.success),
+                tileStatus.failed  => ("✘ Failed — see log", theme.danger),
                 _                  => ("", _statusColor)
             };
             Invalidate();

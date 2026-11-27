@@ -58,6 +58,8 @@ namespace Win11Optimizer
         private bool _searchHasPlaceholder = true;
         private bool _isRunning;
         private CancellationTokenSource _scanCts;
+        private Control[] _lockWhileRunning = [];   // bottom-bar buttons that would rebuild or reselect the grid mid-run
+        private Action _dpiCheck;                   // re-runs the DPI check — used when a postponed rebuild can go ahead
 
         private readonly List<tweakTile> _tiles = new();
         // Persists each tweak's checked state across grid rebuilds (category switches,
@@ -71,7 +73,8 @@ namespace Win11Optimizer
         public mainForm(bool showAdminWarning = false)
         {
             initUI();
-            darkTitleBar.apply(this);
+            DarkTitleBar.Apply(this, theme.surface, theme.textPri, theme.border);
+            _dpiCheck = DpiLayout.Attach(this, rebuildForDpi);
             populateGrid("All");
             _adminBadge.Visible = showAdminWarning;
             checkWhatsNew();
@@ -100,6 +103,19 @@ namespace Win11Optimizer
                 t.setAvailability(state, reason);
             }
             applySearchFilter();
+        }
+
+        // Closing mid-run used to just exit, leaving a category half-applied with no word about it
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (_isRunning && e.CloseReason == CloseReason.UserClosing && MessageBox.Show(
+                    "Tweaks are still being applied. Closing now can leave a category half-applied.\n\nClose anyway?",
+                    "Run in Progress", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+            base.OnFormClosing(e);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -149,11 +165,21 @@ namespace Win11Optimizer
             AutoScaleMode = AutoScaleMode.None;
             Text          = "Win11 Optimizer";
             Size          = new Size(Dpi.S(1200), Dpi.S(760));
-            MinimumSize   = new Size(Dpi.S(960),  Dpi.S(620));
             BackColor     = theme.bg;
             ForeColor     = theme.textPri;
-            Font          = theme.ui(9f);
             StartPosition = FormStartPosition.CenterScreen;
+            buildControls();
+
+            // The log panel floats over the main area rather than docking, so re-seat it on resize
+            Resize += (s, e) => layoutAll();
+        }
+
+        // Everything with a Dpi.S() size or a theme font. Called once at start-up, and again by
+        // rebuildForDpi after the window moves to a monitor with different scaling.
+        private void buildControls()
+        {
+            MinimumSize = new Size(Dpi.S(960), Dpi.S(620));
+            Font        = theme.ui(9f);
 
             buildTopBar();
             buildSidebar();
@@ -162,27 +188,60 @@ namespace Win11Optimizer
             buildLogPanel();
             Controls.AddRange(new Control[] { _mainArea, _sidebar, _bottomBar, _topBar, _logPanel });
             buildTooltip();
-
-            // The log panel floats over the main area rather than docking, so re-seat it on resize
-            Resize += (s, e) => layoutAll();
-            DpiChanged += (s, e) =>
-            {
-                Dpi.Update(e.DeviceDpiNew);
-                if (e.SuggestedRectangle != Rectangle.Empty) Bounds = e.SuggestedRectangle;
-                MinimumSize = new Size(Dpi.S(960), Dpi.S(620));
-                rescalePanels();
-            };
+            foreach (var tab in _tabs.Values) tab.idle += (s, e) => { if (_dpiCheck != null) BeginInvoke(_dpiCheck); };   // retry a postponed rebuild
         }
 
-        private void rescalePanels()
+        // DPI change (another monitor, or the scaling setting): the old handler only resized the four
+        // outer panels, so every tile, row, button and font inside kept the old monitor's size —
+        // clipped text going to 150%, oversized chrome going back to 100%. Rebuilding at the new
+        // scale fixes all of it at once. Postponed (returns false) while a run or a tab's scan /
+        // cleanup is in flight; DpiLayout retries on the next activation or when that work ends.
+        private bool rebuildForDpi()
         {
-            SuspendLayout();
-            _topBar.Height    = Dpi.S(60);
-            _bottomBar.Height = Dpi.S(136);
-            _sidebar.Width    = Dpi.S(210);
-            _logPanel.Height  = Dpi.S(180);   // hidden or not, so it opens at the right size later
-            ResumeLayout(true);
+            if (_isRunning || _tabs.Values.Any(t => t.isBusy)) return false;
+
+            // What the user would notice losing
+            string query      = _searchHasPlaceholder ? "" : _searchBox.Text;
+            string log        = _logBox.Text;
+            bool   logOpen    = _logPanel.Visible, restore = _restoreChk.Checked, admin = _adminBadge.Visible;
+            string status     = _statusLabel.Text;
+            Color  statusCol  = _statusLabel.ForeColor;
+            string update     = _updateBadge.Visible ? _updateBadge.Text : null;
+            var    tileStates = new Dictionary<string, tileStatus>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in _tiles) tileStates[t.entry.tweakKey] = t.status;
+
+            _scanCts?.Cancel();
+            _ttHideTimer.Dispose();
+            _ttTile = null;
+            _tiles.Clear();
+            uiHelpers.clearAndDispose(this);
+            buildControls();
+
+            _logBox.Text         = log;
+            _logPanel.Visible    = logOpen;
+            _restoreChk.Checked  = restore;
+            _adminBadge.Visible  = admin;
+            if (update != null) { _updateBadge.Text = update; _updateBadge.Visible = true; }
+            refreshRebootBadge();
+            refreshSidebar();
+
+            if (_activeCategory == "History")                         showView(_histPanel, buildHistoryContent);
+            else if (_tabs.TryGetValue(_activeCategory, out var tab)) showView(tab, tab.activate);
+            else
+            {
+                populateGrid(_activeCategory);
+                foreach (var t in _tiles)
+                    if (tileStates.TryGetValue(t.entry.tweakKey, out var st) && st != tileStatus.none) t.setStatus(st);
+                if (query.Length > 0)
+                {
+                    _searchHasPlaceholder = false;
+                    _searchBox.ForeColor  = theme.textPri;
+                    _searchBox.Text       = query;   // TextChanged re-applies the filter
+                }
+            }
+            setStatus(status, statusCol);
             layoutAll();
+            return true;
         }
 
         private void layoutAll()
@@ -206,7 +265,7 @@ namespace Win11Optimizer
                 e.Graphics.DrawLine(p, 0, _topBar.Height - 1, _topBar.Width, _topBar.Height - 1);
                 // Subtle gold top accent bar (like website nav)
                 using var bar = new SolidBrush(Color.FromArgb(30, theme.accent));
-                e.Graphics.FillRectangle(bar, 0, 0, _topBar.Width, 2);
+                e.Graphics.FillRectangle(bar, 0, 0, _topBar.Width, Dpi.S(2));
             };
 
             _adminBadge = uiHelpers.lbl("⚠  Not running as Administrator — some tweaks may fail", theme.mono(7.5f), theme.warning, 18, 44);
@@ -218,7 +277,7 @@ namespace Win11Optimizer
             _updateBadge = new Label
             {
                 Font = theme.mono(7.5f, true), ForeColor = theme.accent, BackColor = Color.FromArgb(30, theme.accent),
-                AutoSize = true, Padding = new Padding(6, 4, 6, 4), Cursor = Cursors.Hand, Visible = false
+                AutoSize = true, Padding = new Padding(Dpi.S(6), Dpi.S(4), Dpi.S(6), Dpi.S(4)), Cursor = Cursors.Hand, Visible = false
             };
             _updateBadge.Click += (s, e) => proc.open(appVersion.repoUrl + "/releases/latest");
 
@@ -249,20 +308,20 @@ namespace Win11Optimizer
                 using var p = new Pen(theme.border);
                 e.Graphics.DrawLine(p, _sidebar.Width - 1, 0, _sidebar.Width - 1, _sidebar.Height);
                 // Subtle purple gradient at top — matches website section hero
-                using var grad = new LinearGradientBrush(new Rectangle(0, 0, _sidebar.Width, 80),
+                using var grad = new LinearGradientBrush(new Rectangle(0, 0, _sidebar.Width, Dpi.S(80)),
                     Color.FromArgb(18, theme.skyPurple), Color.Transparent, LinearGradientMode.Vertical);
-                e.Graphics.FillRectangle(grad, 0, 0, _sidebar.Width, 80);
+                e.Graphics.FillRectangle(grad, 0, 0, _sidebar.Width, Dpi.S(80));
             };
 
             // "// CATEGORIES" — website section-label mono style with gold accent
-            _sidebar.Controls.Add(uiHelpers.lbl("// CATEGORIES", theme.mono(7f, true), theme.accent, Dpi.S(14), Dpi.S(14)));
+            _sidebar.Controls.Add(uiHelpers.lbl("// CATEGORIES", theme.mono(7f, true), theme.accent, 14, 14));
 
             int y = Dpi.S(38);
             foreach (var cat in sidebarCategories)
             {
                 if (cat is "Startup" or "History" or "Driver Cleanup")
                 {
-                    _sidebar.Controls.Add(new Panel { BackColor = theme.border, Bounds = new Rectangle(Dpi.S(8), y + 2, Dpi.S(194), 1) });
+                    _sidebar.Controls.Add(new Panel { BackColor = theme.border, Bounds = new Rectangle(Dpi.S(8), y + Dpi.S(2), Dpi.S(194), 1) });
                     y += Dpi.S(10);
                 }
                 var btn = makeSidebarBtn(cat);
@@ -304,9 +363,9 @@ namespace Win11Optimizer
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
                 SizeF sz = g.MeasureString(badge, font);
-                int pw = (int)sz.Width + 10, ph = 16, px = btn.Width - pw - 8, py = (btn.Height - ph) / 2;
+                int pw = (int)sz.Width + Dpi.S(10), ph = Dpi.S(16), px = btn.Width - pw - Dpi.S(8), py = (btn.Height - ph) / 2;
                 using var pill = new SolidBrush(active ? theme.accent : Color.FromArgb(50, theme.accent));
-                g.fillRoundedRect(pill, px, py, pw, ph, 8);
+                g.fillRoundedRect(pill, px, py, pw, ph, ph / 2);
                 using var text = new SolidBrush(active ? theme.accentText : theme.accent);
                 g.DrawString(badge, font, text, px + (pw - sz.Width) / 2f, py + (ph - sz.Height) / 2f);
             };
@@ -343,14 +402,14 @@ namespace Win11Optimizer
             _mainArea = new Panel { BackColor = theme.bg, Dock = DockStyle.Fill };
             buildSearchBar();
 
-            _tileGrid = new FlowLayoutPanel { AutoScroll = true, BackColor = theme.bg, Padding = new Padding(12), Dock = DockStyle.Fill };
+            _tileGrid = new FlowLayoutPanel { AutoScroll = true, BackColor = theme.bg, Padding = new Padding(Dpi.S(12)), Dock = DockStyle.Fill };
             _tileGrid.HorizontalScroll.Enabled = false;
             _tileGrid.HorizontalScroll.Visible = false;
             // Stock FlowLayoutPanel isn't double-buffered; with ~90 tiles repainting at once
             // (Select All / None) that can flash the grid mid-redraw. DoubleBuffered is protected.
             typeof(Panel).GetProperty("DoubleBuffered", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(_tileGrid, true);
 
-            _histPanel = new Panel { AutoScroll = true, BackColor = theme.bg, Padding = new Padding(20), Dock = DockStyle.Fill, Visible = false };
+            _histPanel = new Panel { AutoScroll = true, BackColor = theme.bg, Padding = new Padding(Dpi.S(20)), Dock = DockStyle.Fill, Visible = false };
             _tabs = new()
             {
                 ["Startup"]        = new startupTab(),
@@ -696,7 +755,10 @@ namespace Win11Optimizer
                         if (cts.IsCancellationRequested) return;
                         string key = tile.entry.tweakKey;
                         if (appliedState.isApplied(key) || tweakDetector.check(key) != true) continue;
-                        appliedState.markApplied(new[] { key });   // persist so it survives future sessions
+                        // Not persisted: saving it made the tile show "applied by app" (green) on the
+                        // next launch, gated Undo on it, and stopped it ever being re-checked — so a
+                        // setting you later changed back in Windows still read as applied. The scan
+                        // re-runs on every grid build anyway.
                         BeginInvoke(new Action(() => tile.setApplied(appliedSource.detectedOnSystem)));
                     }
                 });
@@ -718,12 +780,12 @@ namespace Win11Optimizer
 
             var topRow = new Panel
             {
-                Bounds = new Rectangle(0, 0, w, 44), BackColor = Color.Transparent,
+                Bounds = new Rectangle(0, 0, w, Dpi.S(44)), BackColor = Color.Transparent,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             var clearBtn = new flatButton("Clear History", theme.danger)
             {
-                Size = new Size(120, 28), Location = new Point(w - 124, 8), ForeColor = Color.White,
+                Size = new Size(Dpi.S(120), Dpi.S(28)), Location = new Point(w - Dpi.S(124), Dpi.S(8)), ForeColor = Color.White,
                 Anchor = AnchorStyles.Right | AnchorStyles.Top
             };
             clearBtn.Click += (s, e) =>
@@ -735,15 +797,15 @@ namespace Win11Optimizer
             topRow.Controls.AddRange(new Control[] { uiHelpers.lbl("// RUN HISTORY", theme.ui(9f, true), theme.textSec, 0, 13), clearBtn });
             _histPanel.Controls.Add(topRow);
 
-            int y = 52;
+            int y = Dpi.S(52);
             if (changeLog.entries.Count == 0)
-                _histPanel.Controls.Add(uiHelpers.lbl("No runs recorded yet. Apply some tweaks to start tracking history.", theme.ui(10f), theme.textSec, 0, y + 10));
+                _histPanel.Controls.Add(uiHelpers.lbl("No runs recorded yet. Apply some tweaks to start tracking history.", theme.ui(10f), theme.textSec, 0, 62));
 
             foreach (var entry in changeLog.entries)
             {
                 var card = new Panel
                 {
-                    Bounds = new Rectangle(0, y, w - 4, 86), BackColor = theme.surface,
+                    Bounds = new Rectangle(0, y, w - Dpi.S(4), Dpi.S(86)), BackColor = theme.surface,
                     Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
                 };
                 card.Paint += (s, e) =>
@@ -751,7 +813,7 @@ namespace Win11Optimizer
                     using var pen    = new Pen(theme.border);
                     using var stripe = new SolidBrush(theme.accent);
                     e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
-                    e.Graphics.FillRectangle(stripe, 0, 0, 3, card.Height);
+                    e.Graphics.FillRectangle(stripe, 0, 0, Dpi.S(3), card.Height);
                 };
 
                 string stats = $"✔ {entry.passed} succeeded   ✘ {entry.failed} failed" + (entry.restorePoint ? "   🛡 Restore Point" : "");
@@ -768,13 +830,13 @@ namespace Win11Optimizer
                 {
                     var dl = uiHelpers.lbl(string.Join("  ·  ", details.Take(8)) + (details.Count > 8 ? $"  … +{details.Count - 8} more" : ""),
                                            theme.f("Consolas", 7.5f), theme.textSec, 14, 82, 30);
-                    dl.Width = card.Width - 30;
+                    dl.Width = card.Width - Dpi.S(30);
                     card.Controls.Add(dl);
-                    card.Height = 118;
+                    card.Height = Dpi.S(118);
                 }
 
                 _histPanel.Controls.Add(card);
-                y += card.Height + 8;
+                y += card.Height + Dpi.S(8);
             }
             _histPanel.ResumeLayout(true);
         }
@@ -793,8 +855,8 @@ namespace Win11Optimizer
             _progOuter = new Panel { BackColor = theme.border, Location = new Point(Dpi.S(16), Dpi.S(12)), Size = new Size(Dpi.S(500), Dpi.S(6)) };
             _progOuter.Controls.Add(_progInner);
 
-            _statusLabel   = uiHelpers.lbl("Ready",              null, theme.textDim, Dpi.S(16), Dpi.S(24));
-            _selCountLabel = uiHelpers.lbl("No tweaks selected", null, theme.textDim, Dpi.S(16), Dpi.S(46));
+            _statusLabel   = uiHelpers.lbl("Ready",              null, theme.textDim, 16, 24);
+            _selCountLabel = uiHelpers.lbl("No tweaks selected", null, theme.textDim, 16, 46);
 
             _restoreChk = new CheckBox
             {
@@ -834,7 +896,7 @@ namespace Win11Optimizer
             _rebootBadge = new Label
             {
                 Font = theme.mono(7.5f, true), ForeColor = theme.warning, BackColor = Color.FromArgb(30, theme.warning),
-                AutoSize = true, Padding = new Padding(6, 3, 6, 3), Location = new Point(Dpi.S(16), Dpi.S(66)),
+                AutoSize = true, Padding = new Padding(Dpi.S(6), Dpi.S(3), Dpi.S(6), Dpi.S(3)), Location = new Point(Dpi.S(16), Dpi.S(66)),
                 Cursor = Cursors.Hand, Visible = false
             };
             _rebootBadge.Click += (s, e) =>
@@ -860,6 +922,8 @@ namespace Win11Optimizer
                 setStatus($"Profile imported — {_tiles.Count(t => t.isChecked)} tweaks selected.", theme.accent);
                 updateSelCount();
             };
+
+            _lockWhileRunning = new Control[] { clearBtn, exportBtn, importBtn };
 
             _bottomBar.SizeChanged += (s, e) =>
             {
@@ -893,10 +957,10 @@ namespace Win11Optimizer
             };
             _logPanel = new Panel { BackColor = bg, Visible = false, Height = Dpi.S(180) };
 
-            var hdr = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = theme.surface };
-            var closeBtn = new flatButton("✕", theme.surface) { Size = new Size(24, 24), Font = theme.ui(8f), ForeColor = theme.textSec };
+            var hdr = new Panel { Dock = DockStyle.Top, Height = Dpi.S(26), BackColor = theme.surface };
+            var closeBtn = new flatButton("✕", theme.surface) { Size = new Size(Dpi.S(24), Dpi.S(24)), Font = theme.ui(8f), ForeColor = theme.textSec };
             closeBtn.Click += (s, e) => { _logPanel.Visible = false; layoutAll(); };
-            hdr.SizeChanged += (s, e) => closeBtn.Location = new Point(hdr.Width - 26, 1);
+            hdr.SizeChanged += (s, e) => closeBtn.Location = new Point(hdr.Width - Dpi.S(26), Dpi.S(1));
             hdr.Controls.AddRange(new Control[] { uiHelpers.lbl("// OUTPUT LOG", theme.mono(7.5f, true), theme.textSec, 10, 6), closeBtn });
 
             _logPanel.Controls.Add(_logBox);
@@ -923,7 +987,7 @@ namespace Win11Optimizer
                 using var pen = new Pen(Color.FromArgb(80, theme.accent), 1f);
                 e.Graphics.DrawRectangle(pen, 0, 0, _tooltip.Width - 1, _tooltip.Height - 1);
                 using var bar = new SolidBrush(theme.accent);
-                e.Graphics.FillRectangle(bar, 0, 0, 3, _tooltip.Height);
+                e.Graphics.FillRectangle(bar, 0, 0, Dpi.S(3), _tooltip.Height);
             };
             _tooltip.Controls.AddRange(new Control[] { _ttTitle, _ttWhat });
 
@@ -974,14 +1038,16 @@ namespace Win11Optimizer
                 else loadCurrentValueAsync(tile.entry.tweakKey);
             }
             using (var g = _ttWhat.CreateGraphics())
-                _ttWhat.Height = Math.Max((int)g.MeasureString(_ttWhat.Text, _ttWhat.Font, _ttWhat.Width).Height + 8, 30);
-            _tooltip.Height = _ttWhat.Bottom + 16;
+                _ttWhat.Height = Math.Max((int)g.MeasureString(_ttWhat.Text, _ttWhat.Font, _ttWhat.Width).Height + Dpi.S(8), Dpi.S(30));
+            _tooltip.Height = _ttWhat.Bottom + Dpi.S(16);
 
-            // Right of the tile, flipped left if it would overflow; clamped above the bottom bar
+            // Right of the tile, flipped left if it would overflow; clamped above the bottom bar,
+            // and below the top bar (a tall tooltip on a short window used to go off the top)
             Point pt = PointToClient(tile.PointToScreen(Point.Empty));
-            int x = pt.X + tile.Width + 6;
-            if (x + _tooltip.Width > ClientSize.Width - 10) x = pt.X - _tooltip.Width - 6;
-            int y = Math.Min(pt.Y, ClientSize.Height - _bottomBar.Height - _tooltip.Height - 10);
+            int x = pt.X + tile.Width + Dpi.S(6);
+            if (x + _tooltip.Width > ClientSize.Width - Dpi.S(10)) x = pt.X - _tooltip.Width - Dpi.S(6);
+            int y = Math.Min(pt.Y, ClientSize.Height - _bottomBar.Height - _tooltip.Height - Dpi.S(10));
+            y = Math.Max(y, _topBar.Bottom + Dpi.S(4));
 
             _tooltip.Location = new Point(x, y);
             _tooltip.Visible  = true;
@@ -997,7 +1063,12 @@ namespace Win11Optimizer
             if (!running) _nowCache.Clear();   // a run/undo just changed the power plan — re-read the tooltip values
             _runBtn.Enabled = !running;
             if (runText != null) _runBtn.Text = runText;
+            // Switching category, applying a preset or importing a profile mid-run rebuilt the grid
+            // and disposed the tiles the run loop was still updating and scrolling to.
+            _sidebar.Enabled = _searchBar.Enabled = !running;
+            foreach (var c in _lockWhileRunning) c.Enabled = !running;
             updateSelCount();   // also gates Undo on _isRunning
+            if (!running && _dpiCheck != null) BeginInvoke(_dpiCheck);   // a DPI rebuild may have been postponed
         }
 
         private async void onRunClicked(object sender, EventArgs e)
@@ -1013,6 +1084,7 @@ namespace Win11Optimizer
 
             setRunning(true, "⏳ Running...");
             var results = new List<tweakEngine.tweakResult>();
+            var tileOk  = new Dictionary<tweakTile, bool>();
             List<string> needReboot = new(), needExplorer = new();
             int ran = 0;
             try
@@ -1054,6 +1126,7 @@ namespace Win11Optimizer
 
                             var res = tweakEngine.apply(entry);
                             results.AddRange(res);
+                            tileOk[tile] = res.All(r => r.success);
                             ran++;
                             Invoke(new Action(() => { foreach (var r in res) appendLog(r.success ? $"  ✔  {r.name}" : $"  ✘  {r.name}: {r.error}"); }));
                         }
@@ -1069,12 +1142,15 @@ namespace Win11Optimizer
 
                 var done = selected.Take(ran).ToList();
                 int fail = results.Count(r => !r.success), pass = results.Count - fail;
+                // A tweak with a failed step used to get "✔ Done" and be saved as applied anyway
+                var succeeded = done.Where(t => tileOk.TryGetValue(t, out bool ok) && ok).ToList();
                 foreach (var t in done)
                 {
-                    t.setStatus(tileStatus.done);
-                    t.setApplied(appliedSource.appliedByApp);
+                    bool ok = succeeded.Contains(t);
+                    t.setStatus(ok ? tileStatus.done : tileStatus.failed);
+                    if (ok) t.setApplied(appliedSource.appliedByApp);
                 }
-                appliedState.markApplied(done.Select(t => t.entry.tweakKey));   // persist per-tweak applied state
+                appliedState.markApplied(succeeded.Select(t => t.entry.tweakKey));   // persist per-tweak applied state
 
                 setProgress(1, 1);
                 setStatus($"Complete — {pass} succeeded, {fail} failed.", fail == 0 ? theme.success : theme.warning);
@@ -1197,9 +1273,16 @@ namespace Win11Optimizer
             }
         }
 
-        private void restartExplorer()
+        // Off the UI thread — the helper now waits (up to ~5 s) for Windows to bring the shell back
+        private async void restartExplorer()
         {
-            if (!explorerHelper.restart(out string err))
+            appendLog("⟳ Restarting Explorer…");
+            string err = null;
+            bool ok;
+            try { ok = await Task.Run(() => explorerHelper.restart(out err)); }
+            catch (Exception ex) { (ok, err) = (false, ex.Message); }
+            if (IsDisposed) return;
+            if (!ok)
             {
                 appendLog($"✘ Explorer restart failed: {err}");
                 return;

@@ -26,6 +26,13 @@ namespace Win11Optimizer
 
         public static void export(IEnumerable<string> checkedKeys)
         {
+            var keys = checkedKeys.ToList();
+            // An empty profile can't be imported again (import rejects it), so don't write one
+            if (keys.Count == 0)
+            {
+                MessageBox.Show("Select at least one tweak to export.", "Nothing selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
             using var dlg = new SaveFileDialog
             {
                 Title = "Export Tweak Profile", Filter = filter, DefaultExt = "w11profile",
@@ -34,7 +41,7 @@ namespace Win11Optimizer
             if (dlg.ShowDialog() != DialogResult.OK) return;
             try
             {
-                File.WriteAllText(dlg.FileName, JsonSerializer.Serialize(new profile { tweakKeys = checkedKeys.ToList() }, appPaths.indented));
+                File.WriteAllText(dlg.FileName, JsonSerializer.Serialize(new profile { tweakKeys = keys }, appPaths.indented));
                 MessageBox.Show($"Profile exported to:\n{dlg.FileName}", "Export Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)

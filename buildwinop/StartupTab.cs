@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using CornSystems;   // shared Dpi helper
 
 namespace Win11Optimizer
 {
@@ -61,7 +62,7 @@ namespace Win11Optimizer
 
         private static Panel groupHeader(string title)
         {
-            var hdr = new Panel { Height = 36, BackColor = Color.Transparent };
+            var hdr = new Panel { Height = Dpi.S(36), BackColor = Color.Transparent };
             hdr.Controls.Add(uiHelpers.lbl($"// {title.ToUpper()}", theme.mono(7.5f, true), theme.accent, 0, 10));
             uiHelpers.bottomBorder(hdr);
             return hdr;
@@ -72,13 +73,11 @@ namespace Win11Optimizer
             if (inner.Width >= 10) uiHelpers.reflowRowsVertically(inner, inner.Controls.Cast<Control>().ToList(), 0);
         }
 
+        // Startup-folder shortcuts toggle through StartupApproved\StartupFolder, the same flag Task
+        // Manager uses — they used to be delete-only here, and showed as enabled even when disabled.
         private void onToggle(object sender, startupEntry entry)
         {
-            if (entry.source == startupSource.startupFolder)
-                MessageBox.Show("Startup folder shortcuts can't be disabled — only deleted.\n\n" +
-                                "To prevent this item from launching, use the Delete button.",
-                    "Can't Disable Folder Item", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            else if (!startupManager.setEnabled(entry, !entry.isEnabled))
+            if (!startupManager.setEnabled(entry, !entry.isEnabled))
                 MessageBox.Show($"Could not {(entry.isEnabled ? "disable" : "enable")} \"{entry.name}\".\n" +
                                 "Make sure the app is running as Administrator.",
                     "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -111,7 +110,7 @@ namespace Win11Optimizer
         private void setAll(bool enable)
         {
             var failed = new List<string>();
-            foreach (var row in _rows.Where(r => r.entry.source != startupSource.startupFolder && r.entry.isEnabled != enable))
+            foreach (var row in _rows.Where(r => r.entry.isEnabled != enable))
             {
                 if (!startupManager.setEnabled(row.entry, enable)) failed.Add(row.entry.name);
                 row.refreshState();
@@ -146,7 +145,7 @@ namespace Win11Optimizer
 
             _toggle = new CheckBox
             {
-                Checked = entry.isEnabled, Size = new Size(44, 44), Location = new Point(10, 11),
+                Checked = entry.isEnabled, Size = new Size(Dpi.S(44), Dpi.S(44)), Location = new Point(Dpi.S(10), Dpi.S(11)),
                 FlatStyle = FlatStyle.Flat, Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter,
                 Font = theme.f("Segoe UI Emoji", 14f), Cursor = Cursors.Hand, BackColor = Color.Transparent
             };
@@ -177,7 +176,7 @@ namespace Win11Optimizer
 
             _deleteBtn = new Button
             {
-                Text = "🗑", Font = theme.f("Segoe UI Emoji", 11f), FlatStyle = FlatStyle.Flat, Size = new Size(32, 32),
+                Text = "🗑", Font = theme.f("Segoe UI Emoji", 11f), FlatStyle = FlatStyle.Flat, Size = new Size(Dpi.S(32), Dpi.S(32)),
                 BackColor = Color.Transparent, ForeColor = theme.danger, Cursor = Cursors.Hand
             };
             _deleteBtn.FlatAppearance.BorderSize         = 0;
@@ -193,10 +192,10 @@ namespace Win11Optimizer
 
         protected override void layoutRow()
         {
-            int r = place(Width - 8, _deleteBtn) - 8;
-            r = place(r, _impactBadge) - 6;
-            r = place(r, _sourceBadge) - 8;
-            _nameLbl.Width = _pubLbl.Width = _cmdLbl.Width = Math.Max(50, r - 60);
+            int r = place(Width - Dpi.S(8), _deleteBtn) - Dpi.S(8);
+            r = place(r, _impactBadge) - Dpi.S(6);
+            r = place(r, _sourceBadge) - Dpi.S(8);
+            _nameLbl.Width = _pubLbl.Width = _cmdLbl.Width = Math.Max(Dpi.S(50), r - Dpi.S(60));
         }
 
         private void updateToggleText() => _toggle.Text = _toggle.Checked ? "✅" : "⬜";

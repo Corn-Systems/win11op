@@ -33,11 +33,11 @@ namespace Win11Optimizer
             exitCode = 0;
             if (args == null || !args.Any(a => a is "--apply" or "--list-tweaks" || helpFlags.Contains(a))) return false;
 
-            // WinExe has no console — attach to the parent cmd/powershell window
-            // so output lands where the user typed the command.
-            if (!attachConsole(attachParentProcess)) allocConsole();
-
+            // WinExe has no console — attach to the parent cmd/powershell window so output lands
+            // where the user typed the command. --silent never opens a new console window (it used
+            // to AllocConsole one whenever there was no parent console, e.g. from Task Scheduler).
             _silent = args.Contains("--silent");
+            if (!attachConsole(attachParentProcess) && !_silent) allocConsole();
             try
             {
                 appPaths.ensureDataDir();
@@ -101,18 +101,19 @@ namespace Win11Optimizer
 
             tweakEngine.clearResults();
             var all = new List<tweakEngine.tweakResult>();
+            var succeeded = new List<tweakEntry>();
             foreach (var entry in todo)
             {
                 log($"→ [{entry.category}] {entry.name}");
-                foreach (var r in tweakEngine.apply(entry))
-                {
-                    log(r.success ? $"   ✔ {r.name}" : $"   ✘ {r.name}: {r.error}");
-                    all.Add(r);
-                }
+                var res = tweakEngine.apply(entry);
+                foreach (var r in res) log(r.success ? $"   ✔ {r.name}" : $"   ✘ {r.name}: {r.error}");
+                all.AddRange(res);
+                if (res.All(r => r.success)) succeeded.Add(entry);
             }
 
             int fail = all.Count(r => !r.success), pass = all.Count - fail;
-            appliedState.markApplied(todo.Select(t => t.tweakKey));
+            // Only tweaks whose every step worked count as applied (failed ones used to be marked too)
+            appliedState.markApplied(succeeded.Select(t => t.tweakKey));
             changeLog.addEntry(new changeLog.runEntry
             {
                 categories   = string.Join(", ", todo.Select(t => t.category).Distinct()) + " (CLI)",
